@@ -2,10 +2,9 @@ name: Build Cerium for macOS
 
 # Apple Silicon (arm64) build. Runs on GitHub's free Apple Silicon runners;
 # the build is split into resumable jobs (see build-macos-steps.yml) and can
-# take a day or more. It ends with the app as a build artifact; for a version
-# tag, release-macos.yml then signs it, packages the .dmg and publishes it.
-# Started by hand, it only builds: publish the result with "Publish Cerium for
-# macOS" (release-macos.yml).
+# take a day or more. It ends with the app as a build artifact, which
+# "Publish Cerium for macOS" (release-macos.yml) then signs, packages as a .dmg
+# and publishes in the GitHub release for its version.
 on:
   push:
     tags:
@@ -18,8 +17,7 @@ on:
         type: string
 
 permissions:
-  contents: write
-  actions: read
+  contents: read
 
 jobs:
   build:
@@ -28,14 +26,3 @@ jobs:
     with:
       arch: arm64
       os: ${{ inputs.runner || 'macos-15' }}
-
-  release:
-    name: Publish the disk image
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/')
-    uses: ./.github/workflows/release-macos.yml
-    # The Apple Developer ID and extension key secrets (see the README)
-    secrets: inherit
-    with:
-      run_id: ${{ github.run_id }}
-      tag: ${{ github.ref_name }}

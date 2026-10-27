@@ -1,29 +1,22 @@
 name: Publish Cerium for macOS
 
 # Turns a finished macOS build (the cerium-<version>-arm64-macos-app artifact
-# of build-macos.yml) into the disk image people download, and adds it to the
-# GitHub release for that version, creating the release if there is none.
+# of build-macos.yml) into the disk image people download, and publishes it in
+# the GitHub release for that version (tag included), creating the release if
+# there is none and replacing the disk image if there is.
 #
-# - build-macos.yml runs it at the end of a build for a version tag.
+# - Runs by itself whenever "Build Cerium for macOS" finishes successfully.
 # - Run it from the Actions tab to publish the latest finished build (or the
-#   build run given as run_id) without building again, for example after
-#   adding the Apple Developer ID secrets. Publishing again replaces the disk
-#   image in the release.
+#   build run given as run_id) again, without building.
 #
-# With the Apple Developer ID secrets (see "Releases that open with a
-# double-click" in the README) the app is signed and notarized by Apple, so it
-# opens like any other downloaded app. Without them it is signed ad hoc and the
-# release notes explain how to open it anyway.
+# The app is signed ad hoc, so macOS asks users to allow it once (the release
+# notes and a note in the disk image explain how). If the optional Apple
+# Developer ID secrets are set (see the README), it is notarized instead.
 
 on:
-  workflow_call:
-    inputs:
-      run_id:
-        required: true
-        type: string
-      tag:
-        required: true
-        type: string
+  workflow_run:
+    workflows: ['Build Cerium for macOS']
+    types: [completed]
   workflow_dispatch:
     inputs:
       run_id:
@@ -43,6 +36,7 @@ defaults:
 jobs:
   publish:
     name: Sign, package and publish the disk image
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: macos-15
     timeout-minutes: 120
     concurrency:
@@ -57,7 +51,7 @@ jobs:
       - name: Find the build
         id: find
         env:
-          RUN_ID: ${{ inputs.run_id }}
+          RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
         run: |
           if [ -n "$RUN_ID" ]; then
             query="repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100"
@@ -166,7 +160,7 @@ jobs:
 
       - name: Publish
         env:
-          TAG: ${{ inputs.tag || steps.find.outputs.version }}
+          TAG: ${{ steps.find.outputs.version }}
           SHA: ${{ steps.find.outputs.sha }}
           NOTARIZED: ${{ steps.signing.outputs.notarized }}
           FILE_NAME: ${{ steps.find.outputs.file_name }}
@@ -179,7 +173,7 @@ jobs:
             echo "For Macs with an M-series chip, macOS 13 Ventura or later: download \`$FILE_NAME\`, open it and drag **Cerium** onto **Applications**."
             if [ "$NOTARIZED" != true ]; then
               echo
-              echo "This build is not notarized by Apple, so macOS blocks it the first time: open Cerium, then go to **System Settings → Privacy & Security** and click **Open Anyway**. Or run \`xattr -dr com.apple.quarantine /Applications/Cerium.app\` in Terminal."
+              echo "Cerium is not notarized by Apple, so the first time you open it macOS refuses (\"Apple could not verify…\"). Click **Done**, open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to the message about Cerium, then confirm. You only need to do this once. Or run \`xattr -dr com.apple.quarantine /Applications/Cerium.app\` in Terminal."
             fi
             echo
             echo "SHA-256: \`$(cut -d ' ' -f 1 "release/$FILE_NAME.sha256")\`"

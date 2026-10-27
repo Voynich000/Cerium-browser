@@ -10,8 +10,9 @@
 #    utils/bundle_extensions.py);
 # 3. signs it with sign_app.sh: with a Developer ID and notarized when
 #    MACOS_SIGNING_IDENTITY is set, otherwise ad hoc;
-# 4. makes a compressed disk image with the app and an Applications shortcut
-#    to drag it onto.
+# 4. makes a compressed disk image with the app, an Applications shortcut to
+#    drag it onto and, unless notarized, a note on how to open it the first
+#    time.
 
 set -euo pipefail
 
@@ -41,6 +42,31 @@ cp "$_work/extensions/initial_preferences" "$_framework/Resources/"
 "$_root_dir/sign_app.sh" "$_app"
 
 ln -s /Applications "$_staging/Applications"
+if [[ -z "${MACOS_SIGNING_IDENTITY:-}" ]]; then
+  # Not notarized: macOS asks the user to allow the app once.
+  cat > "$_staging/How to open $_product.txt" <<EOF
+Installing $_product
+
+1. Drag $_product onto the Applications folder.
+2. Open $_product from Applications.
+
+$_product is not notarized by Apple, so the first time you open it macOS
+refuses ("Apple could not verify ..." or "... can't be opened"). Then:
+
+1. Click Done (or OK).
+2. Open System Settings > Privacy & Security.
+3. Scroll down to the message about $_product and click Open Anyway.
+4. Confirm with your password or Touch ID, and click Open Anyway again.
+
+You only need to do this once. Instead of steps 1-4 you can also run this
+in Terminal:
+
+    xattr -dr com.apple.quarantine /Applications/$_product.app
+
+uBlock Origin and Dark Reader are already installed and pinned to the
+toolbar.
+EOF
+fi
 mkdir -p "$(dirname "$_target_dmg")"
 rm -f "$_target_dmg"
 # hdiutil occasionally fails with "Resource busy" on CI machines; retry.

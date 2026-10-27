@@ -29,16 +29,14 @@ For Macs with an M-series chip, macOS 13 Ventura or later:
 1. Download `cerium-<version>-arm64-macos.dmg` from the
    [latest release](https://github.com/Voynich000/cerium-browser/releases/latest).
 2. Open it and drag **Cerium** onto **Applications**.
-3. Open Cerium. The first time, macOS asks whether to open an app downloaded from the internet;
-   click **Open**.
+3. Open Cerium. It isn't notarized by Apple, so the first time macOS refuses to open it
+   ("Apple could not verify…"). Click **Done**, open **System Settings → Privacy & Security**,
+   scroll down and click **Open Anyway** next to the message about Cerium, then confirm. You only
+   need to do this once. Alternatively, run
+   `xattr -dr com.apple.quarantine /Applications/Cerium.app` in Terminal.
 
-uBlock Origin and Dark Reader are already installed and pinned to the toolbar.
-
-This is how it works for releases that are signed with an Apple Developer ID and notarized by
-Apple (see [Releases that open with a double-click](#releases-that-open-with-a-double-click)). A
-release made without the Apple signing secrets says so in its notes, and macOS blocks it the first
-time: open Cerium once, then go to **System Settings → Privacy & Security** and click
-**Open Anyway**. Or run `xattr -dr com.apple.quarantine /Applications/Cerium.app` in Terminal.
+uBlock Origin and Dark Reader are already installed and pinned to the toolbar. The disk image
+also contains these steps, in "How to open Cerium.txt".
 
 ## The Google services switch
 
@@ -245,9 +243,8 @@ macos/build.sh arm64           # clones Chromium, patches, builds, packages buil
 ```
 
 The build renames the app (`Cerium.app`) and recompiles the Dock icon's asset catalog with Xcode's
-`actool`. Then `macos/package_dmg.sh` copies the app, adds the bundled extensions, signs it
-(`macos/sign_app.sh`) and makes the disk image. It signs ad hoc unless `MACOS_SIGNING_IDENTITY`
-and the `MACOS_NOTARIZATION_*` variables are set (see `macos/sign_app.sh`).
+`actool`. Then `macos/package_dmg.sh` copies the app, adds the bundled extensions, signs it ad
+hoc (`macos/sign_app.sh`) and makes the disk image.
 
 ## GitHub Actions
 
@@ -255,61 +252,39 @@ and the `MACOS_NOTARIZATION_*` variables are set (see `macos/sign_app.sh`).
 |---|---|
 | `build.yml` | Linux x86_64 and arm64 on the free Ubuntu runners |
 | `build-macos.yml` | macOS Apple Silicon on the free `macos-15` (M1) runners; ends with `Cerium.app` as a build artifact |
-| `release-macos.yml` | **Publish Cerium for macOS**: adds the extensions to a finished macOS build, signs and notarizes it, makes the `.dmg` and adds it to the release |
+| `release-macos.yml` | **Publish Cerium for macOS**: runs after each finished macOS build; adds the extensions, signs the app, makes the `.dmg` and publishes the GitHub release |
 | `check.yml` | Checks the Linux and macOS patch series on every push and pull request |
 
 The two build workflows split the build into a chain of jobs, each under GitHub's 6-hour job
 limit, and pass the build tree between them. A Linux build takes roughly a day; a macOS build
 on 3-core M1 runners can take longer.
 
-Pushing a tag such as `156.0.8078.47-1` starts both builds. The Linux build adds its files to
-the GitHub release for that tag. The macOS build ends by running `release-macos.yml`, which
-adds the disk image, creating the release if there is none yet.
+Pushing a tag such as `156.0.8078.47-1` starts both builds; the Linux build adds its files to
+the GitHub release for that tag. Started by hand from the Actions tab, the Linux build only
+produces build artifacts.
 
-Started by hand from the Actions tab, a build only produces build artifacts. To release a
-finished macOS build, run **Publish Cerium for macOS** from the Actions tab. It takes the latest
-finished build (or the build run whose ID you enter), creates the release named after its version,
-tag included, and adds the disk image. It takes a few minutes, plus Apple's notarization time.
-Running it again replaces the disk image, for example after adding the Apple signing secrets.
-
-## Releases that open with a double-click
-
-macOS only opens a downloaded app without complaint if it is signed with an Apple Developer ID
-certificate and notarized by Apple. That needs a membership of the
-[Apple Developer Program](https://developer.apple.com/programs/) (99 USD a year); there is no
-free way around it. Without it, releases are signed ad hoc and users have to allow Cerium in
-System Settings the first time.
-
-Once you're a member:
-
-1. **Create the certificate.** On a Mac, open Xcode → Settings → Accounts, select your team,
-   click **Manage Certificates**, click **+** and choose **Developer ID Application**. Then in
-   Keychain Access, under **My Certificates**, right-click "Developer ID Application: *your name*
-   (*team ID*)", choose **Export**, and save it as a `.p12` file with a password.
-2. **Create an app-specific password** for your Apple ID at
-   [account.apple.com](https://account.apple.com) → Sign-In and Security → App-Specific
-   Passwords. Notarization uses it.
-3. **Add five repository secrets** (Settings → Secrets and variables → Actions):
-
-   | Secret | Value |
-   |---|---|
-   | `MACOS_CERTIFICATE` | the `.p12` file, base64-encoded: `base64 -i certificate.p12 \| pbcopy` copies it |
-   | `MACOS_CERTIFICATE_PASSWORD` | the password you exported it with |
-   | `MACOS_NOTARIZATION_APPLE_ID` | your Apple ID e-mail address |
-   | `MACOS_NOTARIZATION_TEAM_ID` | your team ID: the 10 characters in brackets in the certificate's name |
-   | `MACOS_NOTARIZATION_PASSWORD` | the app-specific password |
-
-4. Run **Publish Cerium for macOS** to replace the disk image of the latest release, or wait for
-   the next tag.
-
-The publish workflow signs every part of the app with the hardened runtime and Chromium's
-entitlements, sends it to Apple's notary service, staples the ticket to the app and checks it the
-way Gatekeeper does. If any of that fails, the workflow stops before uploading anything.
+Every macOS build that finishes, whether started by a tag or by hand, is published by
+`release-macos.yml`. It takes the app from the build, adds the bundled extensions, signs it,
+makes the disk image and publishes the GitHub release named after the version (for example
+`156.0.8078.47-1`, tag included). If that release already exists, it replaces the disk image and
+keeps the other files. It takes a few minutes. To publish a finished build again without
+rebuilding, run **Publish Cerium for macOS** from the Actions tab; give it a build's run ID, or
+leave that empty for the latest build.
 
 `check.yml` takes about 15 minutes per platform. It runs the tooling tests and applies the
 whole patch stack, domain substitution and the Cerium rename to the real Chromium source
 (`scripts/check-patches.sh`). You can run that script locally too; it needs python3, GNU patch
 and about 20 GB of disk. Set `CERIUM_PATCHES_DIR=macos/patches` to check the macOS series.
+
+### Optional: notarized releases
+
+Releases are signed ad hoc, which is why macOS asks users to allow Cerium once. Apps notarized by
+Apple open without that step, but notarizing needs a paid Apple Developer ID. If you ever get one,
+the publish workflow can use it: add a "Developer ID Application" certificate as the secrets
+`MACOS_CERTIFICATE` (the `.p12` file, base64-encoded) and `MACOS_CERTIFICATE_PASSWORD`, plus
+`MACOS_NOTARIZATION_APPLE_ID`, `MACOS_NOTARIZATION_TEAM_ID` and `MACOS_NOTARIZATION_PASSWORD` (an
+app-specific password). `macos/sign_app.sh` then signs with the hardened runtime, notarizes,
+staples and checks the app the way Gatekeeper does.
 
 ## Updating
 
