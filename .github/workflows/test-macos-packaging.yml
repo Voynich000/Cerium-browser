@@ -59,71 +59,8 @@ jobs:
           hdiutil detach "$mount"
           shasum -a 256 < "$RUNNER_TEMP/test/Chromium.app/Contents/Resources/Assets.car" > "$RUNNER_TEMP/upstream-icon.sha256"
 
-      - name: Diagnose signing
-        continue-on-error: true
-        run: |
-          set +e
-          f="$RUNNER_TEMP/test/Chromium.app/Contents/Frameworks/Chromium Framework.framework/Helpers/chrome_crashpad_handler"
-          cp "$f" "$RUNNER_TEMP/crashpad-copy"
-          {
-            ls -le@ "$f"
-            xattr -l "$f"
-            file "$f"
-            codesign -dvvv "$f" 2>&1 | head -20
-            echo "-- re-sign copy:"
-            codesign --sign - --force --options=restrict,library,runtime,kill --verbose=4 "$RUNNER_TEMP/crashpad-copy" 2>&1; echo "status $?"
-            echo "-- re-sign copy, plain:"
-            codesign --sign - --force --verbose=4 "$RUNNER_TEMP/crashpad-copy" 2>&1; echo "status $?"
-            echo "-- in place:"
-            codesign --sign - --force --verbose=4 "$f" 2>&1; echo "status $?"
-          } > "$RUNNER_TEMP/diag.txt" 2>&1
-          msg="$(cat "$RUNNER_TEMP/diag.txt")"
-          msg="${msg//'%'/'%25'}"; msg="${msg//$'\n'/'%0A'}"
-          echo "::notice::$msg"
-
       - name: Package
         run: macos/package_dmg.sh "$RUNNER_TEMP/test/Chromium.app" "$RUNNER_TEMP/test.dmg"
-
-      - name: Compare launch behaviour of signing variants
-        continue-on-error: true
-        run: |
-          set +e
-          mount="$(hdiutil attach -nobrowse -readonly "$RUNNER_TEMP/test.dmg" | awk -F '\t' '/\/Volumes\// { print $NF; exit }')"
-          mkdir -p "$RUNNER_TEMP/v"
-          ditto "$mount/Chromium.app" "$RUNNER_TEMP/v/ours/Chromium.app"
-          hdiutil detach "$mount"
-          ditto "$RUNNER_TEMP/test/Chromium.app" "$RUNNER_TEMP/v/plain/Chromium.app"
-          xattr -cr "$RUNNER_TEMP/v/plain/Chromium.app"
-          codesign --force --deep --sign - "$RUNNER_TEMP/v/plain/Chromium.app" 2>&1 | tail -n 2
-          try() {  # try <name> <app> [flags...]
-            local name="$1" app="$2"; shift 2
-            local result=""
-            for attempt in 1 2; do
-              local dir="$RUNNER_TEMP/v/run-$name-$attempt"
-              mkdir -p "$dir"
-              perl -e 'alarm 90; exec @ARGV' "$app/Contents/MacOS/Chromium" --headless=new --no-first-run \
-                --user-data-dir="$dir/profile" "$@" --dump-dom 'data:text/html,<title>ok</title>' \
-                > "$dir/dom.html" 2> "$dir/err.log"
-              local status=$?
-              local page=$(grep -c '<title>ok</title>' "$dir/dom.html")
-              local net=$(grep -c 'Network service crashed' "$dir/err.log")
-              local wd=$(grep -c 'Teardown watchdog' "$dir/err.log")
-              result="$result [exit $status, page $page, netcrash $net, watchdog $wd]"
-            done
-            echo "$name:$result"
-          }
-          {
-            try control "$RUNNER_TEMP/test/Chromium.app"
-            try ours "$RUNNER_TEMP/v/ours/Chromium.app"
-            try ours-novalidate "$RUNNER_TEMP/v/ours/Chromium.app" --disable-features=ValidateNetworkServiceProcessIdentity
-            try plain-adhoc "$RUNNER_TEMP/v/plain/Chromium.app"
-            try ours-mockkeychain "$RUNNER_TEMP/v/ours/Chromium.app" --use-mock-keychain
-            try control-mockkeychain "$RUNNER_TEMP/test/Chromium.app" --use-mock-keychain
-            # Which keychain items the runs created, and their access lists
-            security dump-keychain 2>/dev/null | grep -A2 -i 'safe storage' | head -n 20
-          } > "$RUNNER_TEMP/variants.txt" 2>&1
-          msg="$(cat "$RUNNER_TEMP/variants.txt")"; msg="${msg//'%'/'%25'}"; msg="${msg//$'\n'/'%0A'}"
-          echo "::notice::Variants:%0A$msg"
 
       - name: Check the disk image
         run: |
@@ -144,28 +81,29 @@ jobs:
           # Install it the way users do: copy it out of the disk image.
           mkdir -p "$RUNNER_TEMP/installed"
           ditto "$app" "$RUNNER_TEMP/installed/Chromium.app"
-          launch() {  # launch <app> <name>: prints the page, exits; stderr to <name>.log
-            perl -e 'alarm 120; exec @ARGV' "$1/Contents/MacOS/Chromium" --headless=new \
-              --no-first-run --user-data-dir="$RUNNER_TEMP/profile-$2" --dump-dom \
-              'data:text/html,<title>ok</title>' > "$RUNNER_TEMP/dom-$2.html" 2> "$RUNNER_TEMP/$2.log"
-          }
-          # Control: upstream's own app, as downloaded.
-          control=0
-          launch "$RUNNER_TEMP/test/Chromium.app" control || control=$?
-          echo "::notice::Upstream's own app: exit status $control, page $(grep -c '<title>ok</title>' "$RUNNER_TEMP/dom-control.html" || true), $(grep -c 'Network service crashed' "$RUNNER_TEMP/control.log" || true) network service crashes"
-          # The signed app has to start (hardened runtime, entitlements,
-          # library validation). It prints the page and exits.
+          # The app has to start with its signature (hardened runtime,
+          # entitlements), show a page and quit cleanly, twice: the first run
+          # creates the profile and its "Safe Storage" key in the keychain, the
+          # second reads them. Nothing else may have created that keychain item
+          # (as upstream's differently signed app would): macOS would then ask
+          # the user for permission, which blocks on a CI machine.
           status=0
-          launch "$RUNNER_TEMP/installed/Chromium.app" packaged || status=$?
-          cp "$RUNNER_TEMP/packaged.log" "$RUNNER_TEMP/app.log"
-          cp "$RUNNER_TEMP/dom-packaged.html" "$RUNNER_TEMP/dom.html"
+          for run in first second; do
+            perl -e 'alarm 120; exec @ARGV' "$RUNNER_TEMP/installed/Chromium.app/Contents/MacOS/Chromium" \
+              --headless=new --no-first-run --user-data-dir="$RUNNER_TEMP/profile" --dump-dom \
+              'data:text/html,<title>ok</title>' > "$RUNNER_TEMP/dom.html" 2> "$RUNNER_TEMP/app.log" || status=$?
+            if [ "$status" != 0 ] || ! grep -q '<title>ok</title>' "$RUNNER_TEMP/dom.html"; then
+              echo "$run launch failed"
+              break
+            fi
+          done
           if [ "$status" != 0 ] || ! grep -q '<title>ok</title>' "$RUNNER_TEMP/dom.html"; then
             set +e +o pipefail
             trap - ERR
             {
               echo "The app exited with status $status. Its output:"
               grep -v CVDisplayLink "$RUNNER_TEMP/app.log" | tail -c 2500
-              echo "Crash dumps: $(find "$RUNNER_TEMP/profile-packaged" -path '*Crashpad*' -type f 2>/dev/null | head -n 5)"
+              echo "Crash dumps: $(find "$RUNNER_TEMP/profile" -path '*Crashpad*' -type f 2>/dev/null | head -n 5)"
               report="$(ls -t ~/Library/Logs/DiagnosticReports/*.ips 2>/dev/null | head -n 1)"
               if [ -n "$report" ]; then
                 echo "Crash report $(basename "$report"):"
@@ -190,5 +128,5 @@ jobs:
             exit 1
           fi
           size="$(du -h "$RUNNER_TEMP/test.dmg" | cut -f 1)"
-          echo "::notice::Packaged $size disk image; extensions: $extensions; the signed app starts"
+          echo "::notice::Packaged $size disk image; extensions: $extensions; the signed app starts and quits cleanly"
           hdiutil detach "$mount"

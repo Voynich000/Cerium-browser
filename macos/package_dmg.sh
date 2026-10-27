@@ -72,6 +72,11 @@ in Terminal:
 
     xattr -dr com.apple.quarantine /Applications/$_product.app
 
+After you install an update, macOS may ask whether $_product may use
+"$_product Safe Storage" in your keychain (where $_product keeps the key that
+encrypts your saved passwords and cookies). Enter your password and click
+Always Allow.
+
 uBlock Origin and Dark Reader are already installed and pinned to the
 toolbar.
 EOF

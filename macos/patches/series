@@ -35,6 +35,7 @@ cerium/restore-spellcheck-downloads.patch
 cerium/add-google-services-setting.patch
 cerium/add-bundled-extensions.patch
 cerium/rebrand-linux-identity.patch
+cerium/rebrand-secret-storage.patch
 
 # Cerium: macOS only
 cerium-macos/set-bundle-identifier.patch

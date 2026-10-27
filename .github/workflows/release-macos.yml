@@ -187,6 +187,8 @@ jobs:
             if [ "$NOTARIZED" != true ]; then
               echo
               echo "Cerium is not notarized by Apple, so the first time you open it macOS refuses (\"Apple could not verify…\"). Click **Done**, open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to the message about Cerium, then confirm. You only need to do this once. Or run \`xattr -dr com.apple.quarantine /Applications/Cerium.app\` in Terminal."
+              echo
+              echo "When you update from an earlier version, macOS may also ask whether Cerium may use \"Cerium Safe Storage\" in your keychain: enter your password and click **Always Allow**."
             fi
             echo
             echo "SHA-256: \`$(cut -d ' ' -f 1 "release/$FILE_NAME.sha256")\`"

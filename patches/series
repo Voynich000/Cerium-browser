@@ -22,3 +22,4 @@ cerium/add-bundled-extensions.patch
 
 # Cerium: branding (UI strings are renamed by utils/rebrand.py)
 cerium/rebrand-linux-identity.patch
+cerium/rebrand-secret-storage.patch

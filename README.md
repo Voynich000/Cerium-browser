@@ -35,6 +35,10 @@ For Macs with an M-series chip, macOS 13 Ventura or later:
    need to do this once. Alternatively, run
    `xattr -dr com.apple.quarantine /Applications/Cerium.app` in Terminal.
 
+After an update, macOS may ask whether Cerium may use "Cerium Safe Storage" in your keychain,
+where Cerium keeps the key that encrypts saved passwords and cookies. Enter your password and
+click **Always Allow**. It asks because each release has a new ad hoc signature.
+
 uBlock Origin and Dark Reader are already installed and pinned to the toolbar. The disk image
 also contains these steps, in "How to open Cerium.txt".
 
@@ -163,6 +167,10 @@ Settings, menus, dialogs and error pages, in all 81 languages.
     with an installed Chromium;
   - `cerium.desktop` as the desktop file, which also sets the window class;
   - `cerium` as the icon name.
+- `patches/cerium/rebrand-secret-storage.patch` keeps the key that encrypts saved passwords and
+  cookies under "Cerium Safe Storage" in the macOS keychain and the Linux secret store, so
+  Cerium never shares Chromium's. This name must never change: a new name means a new key, and
+  existing passwords and cookies could no longer be decrypted.
 
 Some things deliberately still say Chromium:
 
