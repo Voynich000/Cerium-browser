@@ -1,0 +1,12 @@
+/build/
+/.config/
+/.gcs_entries
+*.tar
+*.tar.xz
+*.AppImage
+*.AppImage.zsync
+*.log
+
+# Extension signing keys (see utils/bundle_extensions.py). Never commit them.
+/keys/
+__pycache__/

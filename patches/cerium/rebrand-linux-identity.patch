@@ -1,0 +1,38 @@
+# Gives Cerium its own identity on Linux: profile in ~/.config/cerium and cache
+# in ~/.cache/cerium (never sharing a Chromium profile), cerium.desktop as the
+# desktop file (which also sets the window class) and "cerium" as the icon
+# name. The UI strings are renamed by utils/rebrand.py at build time.
+
+--- a/chrome/browser/shell_integration_linux.cc
++++ b/chrome/browser/shell_integration_linux.cc
+@@ -471,7 +471,7 @@ std::string GetIconName() {
+ #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+   return "google-chrome";
+ #else  // BUILDFLAG(CHROMIUM_BRANDING)
+-  return "chromium-browser";
++  return "cerium";
+ #endif
+ }
+ 
+--- a/chrome/common/channel_info_posix.cc
++++ b/chrome/common/channel_info_posix.cc
+@@ -148,7 +148,7 @@ std::string GetDesktopName(base::Environment* env) {
+   if (name.has_value() && !name.value().empty()) {
+     return name.value();
+   }
+-  return "chromium-browser.desktop";
++  return "cerium.desktop";
+ #endif
+ }
+ #endif  // BUILDFLAG(IS_LINUX)
+--- a/chrome/common/chrome_paths_linux.cc
++++ b/chrome/common/chrome_paths_linux.cc
+@@ -95,7 +95,7 @@ bool GetDefaultUserDataDirectory(base::FilePath* result) {
+ #elif BUILDFLAG(GOOGLE_CHROME_BRANDING)
+   std::string data_dir_basename = "google-chrome";
+ #else
+-  std::string data_dir_basename = "chromium";
++  std::string data_dir_basename = "cerium";
+ #endif
+   *result = config_dir.Append(data_dir_basename + GetChannelSuffixForDataDir());
+   return true;

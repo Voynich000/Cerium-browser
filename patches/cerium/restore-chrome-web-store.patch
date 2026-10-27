@@ -1,0 +1,199 @@
+# With Google services on, restores Chrome Web Store installs, which
+# disable-webstore-urls.patch and 0005-disable-default-extensions.patch remove:
+# the store is recognised by its real origin, gets webstorePrivate and its own
+# process, and WebstoreInstaller downloads and installs CRX files again.
+
+--- a/chrome/browser/extensions/chrome_content_browser_client_extensions_part.cc
++++ b/chrome/browser/extensions/chrome_content_browser_client_extensions_part.cc
+@@ -71,6 +71,7 @@
+ #include "extensions/common/mojom/manifest.mojom-shared.h"
+ #include "extensions/common/permissions/permissions_data.h"
+ #include "extensions/common/switches.h"
++#include "net/base/google_services_toggle.h"
+ #include "pdf/buildflags.h"
+ #include "third_party/blink/public/common/features_generated.h"
+ #include "third_party/blink/public/common/web_preferences/web_preferences.h"
+@@ -684,6 +685,14 @@ std::vector<url::Origin> ChromeContentBrowserClientExtensionsPart::
+     GetOriginsRequiringDedicatedProcess() {
+   std::vector<url::Origin> list;
+ 
++  if (net::IsGoogleServicesEnabled()) {
++    // Require a dedicated process for the webstore origin.  See
++    // https://crbug.com/40094229.
++    list.push_back(url::Origin::Create(extension_urls::GetWebstoreLaunchURL()));
++    list.push_back(
++        url::Origin::Create(extension_urls::GetNewWebstoreLaunchURL()));
++  }
++
+   return list;
+ }
+ 
+--- a/chrome/common/extensions/chrome_extensions_client.cc
++++ b/chrome/common/extensions/chrome_extensions_client.cc
+@@ -37,6 +37,7 @@
+ #include "extensions/common/switches.h"
+ #include "extensions/common/url_pattern.h"
+ #include "extensions/common/url_pattern_set.h"
++#include "net/base/google_services_toggle.h"
+ #include "services/network/public/mojom/cors_origin_pattern.mojom.h"
+ #include "ui/base/l10n/l10n_util.h"
+ #include "url/gurl.h"
+@@ -83,8 +84,10 @@ void ChromeExtensionsClient::InitializeWebStoreUrls(
+     new_webstore_base_url_ =
+         GURL(command_line->GetSwitchValueASCII(switches::kAppsGalleryURL));
+   } else {
+-    webstore_base_url_ = GURL(extension_urls::kChromeWebstoreBaseURL);
+-    new_webstore_base_url_ = GURL(extension_urls::kNewChromeWebstoreBaseURL);
++    webstore_base_url_ = net::MaybeUnsubstituteURL(
++        GURL(extension_urls::kChromeWebstoreBaseURL));
++    new_webstore_base_url_ = net::MaybeUnsubstituteURL(
++        GURL(extension_urls::kNewChromeWebstoreBaseURL));
+   }
+   if (command_line->HasSwitch(::switches::kAppsGalleryUpdateURL)) {
+     webstore_update_url_ = GURL(
+--- a/extensions/browser/webstore_installer.cc
++++ b/extensions/browser/webstore_installer.cc
+@@ -58,6 +58,7 @@
+ #include "extensions/common/manifest_handlers/shared_module_info.h"
+ #include "extensions/common/switches.h"
+ #include "extensions/strings/grit/extensions_strings.h"
++#include "net/base/google_services_toggle.h"
+ #include "net/base/url_util.h"
+ #include "net/traffic_annotation/network_traffic_annotation.h"
+ #include "ui/base/l10n/l10n_util.h"
+@@ -481,6 +482,26 @@ void WebstoreInstaller::DownloadNextPendingModule() {
+ 
+ void WebstoreInstaller::DownloadCrx(const ExtensionId& extension_id,
+                                     InstallSource source) {
++  // Web Store installs are only available with Google services turned on.
++  if (!net::IsGoogleServicesEnabled()) {
++    return;
++  }
++
++  download_url_ = GetWebstoreInstallURL(extension_id, source);
++  MaybeAppendAuthUserParameter(approval_->authuser, download_url_);
++
++  base::FilePath user_data_dir =
++      ExtensionsBrowserClient::Get()->GetUserDataDir();
++  base::FilePath download_path = user_data_dir.Append(kWebstoreDownloadFolder);
++
++  base::FilePath download_directory(g_download_directory_for_tests
++                                        ? *g_download_directory_for_tests
++                                        : download_path);
++
++  GetExtensionFileTaskRunner()->PostTaskAndReplyWithResult(
++      FROM_HERE,
++      base::BindOnce(&GetDownloadFilePath, download_directory, extension_id),
++      base::BindOnce(&WebstoreInstaller::StartDownload, this, extension_id));
+ }
+ 
+ // http://crbug.com/40957413
+@@ -635,6 +656,27 @@ void WebstoreInstaller::UpdateDownloadProgress() {
+ void WebstoreInstaller::StartCrxInstaller(const DownloadItem& download) {
+   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+   DCHECK(!crx_installer_.get());
++  if (!net::IsGoogleServicesEnabled()) {
++    return;
++  }
++
++  const InstallApproval* approval = GetAssociatedApproval(download);
++  DCHECK(approval);
++
++  crx_installer_ =
++      ExtensionsBrowserClient::Get()->CreateCrxInstallerFromDownloadItem(
++          browser_context_, download);
++
++  crx_installer_->set_expected_id(approval->extension_id);
++  crx_installer_->set_is_gallery_install(true);
++  crx_installer_->set_allow_silent_install(true);
++  crx_installer_->AddInstallerCallback(base::BindOnce(
++      &WebstoreInstaller::OnInstallerDone, weak_ptr_factory_.GetWeakPtr()));
++  if (approval->withhold_permissions) {
++    crx_installer_->set_withhold_permissions();
++  }
++
++  crx_installer_->InstallCrx(download.GetFullPath());
+ }
+ 
+ void WebstoreInstaller::ReportFailure(const std::string& error,
+--- a/extensions/common/extension_urls.cc
++++ b/extensions/common/extension_urls.cc
+@@ -16,6 +16,7 @@
+ #include "extensions/common/constants.h"
+ #include "extensions/common/extension_id.h"
+ #include "extensions/common/extensions_client.h"
++#include "net/base/google_services_toggle.h"
+ #include "net/base/url_util.h"
+ #include "url/gurl.h"
+ #include "url/origin.h"
+@@ -66,7 +67,7 @@ GURL GetWebstoreLaunchURL() {
+   extensions::ExtensionsClient* client = extensions::ExtensionsClient::Get();
+   if (client)
+     return client->GetWebstoreBaseURL();
+-  return GURL(kChromeWebstoreBaseURL);
++  return net::MaybeUnsubstituteURL(GURL(kChromeWebstoreBaseURL));
+ }
+ 
+ GURL GetModernWebGuidanceURL() {
+@@ -77,7 +78,7 @@ GURL GetNewWebstoreLaunchURL() {
+   extensions::ExtensionsClient* client = extensions::ExtensionsClient::Get();
+   if (client)
+     return client->GetNewWebstoreBaseURL();
+-  return GURL(kNewChromeWebstoreBaseURL);
++  return net::MaybeUnsubstituteURL(GURL(kNewChromeWebstoreBaseURL));
+ }
+ 
+ GURL AppendUtmSource(const GURL& url, std::string_view utm_source_value) {
+@@ -119,7 +120,7 @@ base::AutoReset<const GURL*> SetItemSnippetURLForTesting(const GURL* test_url) {
+ }
+ 
+ GURL GetDefaultWebstoreUpdateUrl() {
+-  return GURL(kChromeWebstoreUpdateURL);
++  return net::MaybeUnsubstituteURL(GURL(kChromeWebstoreUpdateURL));
+ }
+ 
+ GURL GetWebstoreUpdateUrl() {
+--- a/extensions/common/features/simple_feature.cc
++++ b/extensions/common/features/simple_feature.cc
+@@ -7,6 +7,8 @@
+ #include <algorithm>
+ #include <map>
+ #include <memory>
++#include <optional>
++#include <string>
+ #include <string_view>
+ #include <utility>
+ #include <vector>
+@@ -36,6 +38,8 @@
+ #include "extensions/common/mojom/context_type.mojom.h"
+ #include "extensions/common/switches.h"
+ #include "extensions/common/url_pattern.h"
++#include "net/base/domain_unsubstitution.h"
++#include "net/base/google_services_toggle.h"
+ 
+ using crx_file::id_util::HashedIdInHex;
+ using extensions::mojom::ManifestLocation;
+@@ -690,7 +694,22 @@ bool SimpleFeature::MatchesURL(const GURL& url) const {
+   // for the feature's process lifetime.
+   return std::ranges::any_of(
+       match_patterns(), [&url](std::string_view pattern) {
+-        return URLPattern(URLPattern::SCHEME_ALL, pattern).MatchesURL(url);
++        URLPattern url_pattern(URLPattern::SCHEME_ALL, pattern);
++        if (url_pattern.MatchesURL(url)) {
++          return true;
++        }
++        // Patterns for Google sites were renamed by domain substitution.
++        // Match them against the real hosts while Google services are on.
++        if (!net::IsGoogleServicesEnabled()) {
++          return false;
++        }
++        std::optional<std::string> host =
++            net::UnsubstituteHost(url_pattern.host());
++        if (!host) {
++          return false;
++        }
++        url_pattern.SetHost(*host);
++        return url_pattern.MatchesURL(url);
+       });
+ }
+ 

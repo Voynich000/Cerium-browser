@@ -1,0 +1,39 @@
+name: Check patches
+
+# Quick checks (about 15 minutes) that run before anyone spends hours on a
+# full build: the Cerium tooling tests, and the whole patch stack plus domain
+# substitution applied to the real Chromium source.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: true }
+
+      - name: Install Python dependencies
+        run: sudo apt-get update && sudo apt-get install -y python3-cryptography
+
+      - name: Test CRX3 packer
+        run: python3 utils/test_crx3.py
+
+      - name: Check domain unsubstitution
+        run: python3 utils/check_domain_unsubstitution.py
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup /usr/lib/jvm \
+                      /usr/lib/google-cloud-sdk /usr/lib/dotnet /usr/share/swift
+          df -h .
+
+      - name: Apply all patches to the Chromium source
+        run: bash scripts/check-patches.sh

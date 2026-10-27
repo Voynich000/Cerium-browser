@@ -1,0 +1,491 @@
+# Adds the GoogleServices feature (off by default) and the
+# "google_services.enabled" local-state pref that turns it on at startup.
+# net/base/domain_unsubstitution.* reverses ungoogled-chromium's domain
+# substitution so the browser can reach the real Google hosts when the
+# switch is on.
+
+--- a/chrome/browser/metrics/chrome_feature_list_creator.cc
++++ b/chrome/browser/metrics/chrome_feature_list_creator.cc
+@@ -4,6 +4,7 @@
+ 
+ #include "chrome/browser/metrics/chrome_feature_list_creator.h"
+ 
++#include <functional>
+ #include <vector>
+ 
+ #include "base/command_line.h"
+@@ -24,6 +25,7 @@
+ #include "chrome/browser/prefs/chrome_pref_service_factory.h"
+ #include "chrome/common/chrome_paths.h"
+ #include "chrome/common/chrome_switches.h"
++#include "chrome/common/pref_names.h"
+ #include "chrome/installer/util/initial_preferences.h"
+ #include "components/content_settings/core/common/features.h"
+ #include "components/network_time/network_time_tracker.h"
+@@ -37,6 +39,7 @@
+ #include "components/webui/flags/pref_service_flags_storage.h"
+ #include "content/public/common/content_switch_dependent_feature_overrides.h"
+ #include "content/public/common/content_switches.h"
++#include "net/base/google_services_toggle.h"
+ #include "services/network/public/cpp/network_switches.h"
+ #include "services/network/public/cpp/shared_url_loader_factory.h"
+ #include "ui/base/resource/resource_bundle.h"
+@@ -236,13 +239,21 @@ void ChromeFeatureListCreator::SetUpFieldTrials() {
+       about_flags::RegisterAllFeatureVariationParameters(&flags_storage,
+                                                          feature_list.get());
+ 
++  std::vector<base::FeatureList::FeatureOverrideInfo> extra_overrides =
++      content::GetSwitchDependentFeatureOverrides(
++          *base::CommandLine::ForCurrentProcess());
++  // The Google services switch in chrome://settings/system. Command-line
++  // --enable-features/--disable-features are registered first and win.
++  if (local_state_->GetBoolean(prefs::kGoogleServicesEnabled)) {
++    extra_overrides.emplace_back(std::cref(net::kGoogleServices),
++                                 base::FeatureList::OVERRIDE_ENABLE_FEATURE);
++  }
++
+   variations::VariationsService* variations_service =
+       metrics_services_manager_->GetVariationsService();
+   variations_service->SetUpFieldTrials(
+-      variation_ids,
+-      content::GetSwitchDependentFeatureOverrides(
+-          *base::CommandLine::ForCurrentProcess()),
+-      std::move(feature_list), browser_field_trials_.get());
++      variation_ids, extra_overrides, std::move(feature_list),
++      browser_field_trials_.get());
+   variations::InitCrashKeys();
+ }
+ 
+--- a/chrome/browser/prefs/browser_prefs.cc
++++ b/chrome/browser/prefs/browser_prefs.cc
+@@ -1550,6 +1550,7 @@ void RegisterLocalState(PrefRegistrySimple* registry) {
+   ExternalProtocolHandler::RegisterPrefs(registry);
+   flags_ui::PrefServiceFlagsStorage::RegisterPrefs(registry);
+   GpuModeManager::RegisterPrefs(registry);
++  registry->RegisterBooleanPref(prefs::kGoogleServicesEnabled, false);
+   signin::IdentityManager::RegisterLocalStatePrefs(registry);
+   IntranetRedirectDetector::RegisterPrefs(registry);
+   language::GeoLanguageProvider::RegisterLocalStatePrefs(registry);
+--- a/chrome/common/pref_names.h
++++ b/chrome/common/pref_names.h
+@@ -2426,6 +2426,11 @@ inline constexpr char kBackgroundModeEnabled[] = "background_mode.enabled";
+ inline constexpr char kHardwareAccelerationModeEnabled[] =
+     "hardware_acceleration_mode.enabled";
+ 
++// Set to true if the user turned on Google services (Chrome Web Store,
++// extension and component updates, spell-check downloads) in
++// chrome://settings/system. Applied to net::kGoogleServices at startup.
++inline constexpr char kGoogleServicesEnabled[] = "google_services.enabled";
++
+ #if BUILDFLAG(IS_WIN)
+ // Set to true if process isolation mode is enabled.
+ inline constexpr char kProcessIsolationEnabled[] = "isolation_state.enabled";
+--- a/net/BUILD.gn
++++ b/net/BUILD.gn
+@@ -201,6 +201,8 @@ component("net") {
+     "base/data_url.h",
+     "base/does_url_match_filter.cc",
+     "base/does_url_match_filter.h",
++    "base/domain_unsubstitution.cc",
++    "base/domain_unsubstitution.h",
+     "base/ech_mode.h",
+     "base/elements_upload_data_stream.cc",
+     "base/elements_upload_data_stream.h",
+@@ -214,6 +216,8 @@ component("net") {
+     "base/filename_util.h",
+     "base/filename_util_internal.cc",
+     "base/filename_util_internal.h",
++    "base/google_services_toggle.cc",
++    "base/google_services_toggle.h",
+     "base/hash_value.cc",
+     "base/hash_value.h",
+     "base/hex_utils.cc",
+@@ -2899,6 +2903,7 @@ target(_test_target_type, "net_unittests") {
+     "base/connection_endpoint_metadata_unittest.cc",
+     "base/data_url_unittest.cc",
+     "base/does_url_match_filter_unittest.cc",
++    "base/domain_unsubstitution_unittest.cc",
+     "base/elements_upload_data_stream_unittest.cc",
+     "base/expiring_cache_unittest.cc",
+     "base/fake_proxy_delegate.cc",
+--- /dev/null
++++ b/net/base/domain_unsubstitution.cc
+@@ -0,0 +1,170 @@
++// Copyright 2026 The Cerium Browser Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "net/base/domain_unsubstitution.h"
++
++#include <array>
++#include <optional>
++#include <string>
++#include <string_view>
++
++#include "base/strings/string_util.h"
++
++namespace net {
++
++namespace {
++
++// Every substituted domain ends up under this made-up TLD.
++constexpr std::string_view kSubstitutedTld = ".qjz9zk";
++
++// Written in two pieces so that domain substitution does not rewrite it.
++constexpr std::string_view kGooGl = "goo" ".gl";
++
++// What a capture group of a domain_regex.list rule can contain once the
++// domain is part of a canonical (lower case) hostname.
++enum class Group {
++  kNone,           // The rule has no capture group here.
++  kLabelChars,     // ([A-Za-z\-]*?\\*?)  ->  [a-z-]*
++  kOptionalDigit,  // ([1-9]?\\*?)        ->  [1-9]?
++  kOptionalE,      // (e?)                ->  e?
++};
++
++// A domain_regex.list rule, read backwards. Domain substitution turns
++//   <original_a><group1><original_b><group2><original_c>
++// into
++//   <substituted_a><group1><substituted_b><group2>.qjz9zk
++struct Rule {
++  std::string_view substituted_a;
++  Group group1;
++  std::string_view substituted_b;
++  Group group2;
++  std::string_view original_a;
++  std::string_view original_b;
++  std::string_view original_c;
++};
++
++// Same order as domain_regex.list. The original names are split into pieces
++// so that domain substitution itself never rewrites this table.
++constexpr auto kRules = std::to_array<Rule>({
++    {"f0ntz.9oo91e8p1", Group::kNone, "", Group::kNone, "fonts.googleapis", "",
++     ".com"},
++    {"9oo91e", Group::kLabelChars, "", Group::kNone, "google", "", ".com"},
++    {"95tat1c", Group::kLabelChars, "", Group::kNone, "gstatic", "", ".com"},
++    {"ch40me", Group::kLabelChars, "", Group::kNone, "chrome", "", ".com"},
++    {"ch40m1um", Group::kLabelChars, "", Group::kNone, "chromium", "", ".org"},
++    {"m0z111a", Group::kLabelChars, "", Group::kNone, "mozilla", "", ".org"},
++    {"f8c3b00k", Group::kLabelChars, "", Group::kNone, "facebook", "", ".com"},
++    {"8pp2p8t", Group::kLabelChars, "", Group::kNone, "appspot", "", ".com"},
++    {"y0u1ub3", Group::kLabelChars, "", Group::kNone, "youtube", "", ".com"},
++    {"yt1mg", Group::kLabelChars, "", Group::kNone, "ytimg", "", ".com"},
++    {"9ma1l", Group::kLabelChars, "", Group::kNone, "gmail", "", ".com"},
++    {"60u613cl1c4", Group::kLabelChars, ".n3t", Group::kNone, "doubleclick",
++     "", ".net"},
++    {"60u613cl1c4", Group::kLabelChars, ".c0m", Group::kNone, "doubleclick",
++     "", ".com"},
++    {"9oo91e21p", Group::kNone, "", Group::kNone, "googlezip", "", ".net"},
++    {"b3ac0n2", Group::kOptionalDigit, ".9vt", Group::kOptionalDigit,
++     "beacons", ".gvt", ".com"},
++    {"99pht", Group::kNone, "", Group::kNone, "ggpht", "", ".com"},
++    {"m1cr050ft", Group::kNone, "", Group::kNone, "microsoft", "", ".com"},
++    // The replacement is "l3lOO"; hosts are canonicalized to lower case.
++    {"l3loo", Group::kNone, "", Group::kNone, "1e100", "", ".net"},
++    {"8n6r01d", Group::kNone, "", Group::kNone, "android", "", ".com"},
++    {kGooGl, Group::kOptionalE, "", Group::kNone, kGooGl, "", ""},
++    {"pr1v4cy54ndb0x", Group::kLabelChars, "", Group::kNone, "privacysandbox",
++     "", ".com"},
++});
++
++bool IsLabelChar(char c) {
++  return (c >= 'a' && c <= 'z') || c == '-';
++}
++
++// Returns the length of the longest prefix of |text| that |group| can match.
++// Every shorter length is a valid match too.
++size_t MaxGroupLength(Group group, std::string_view text) {
++  if (group == Group::kLabelChars) {
++    size_t length = 0;
++    while (length < text.size() && IsLabelChar(text[length])) {
++      ++length;
++    }
++    return length;
++  }
++  if (text.empty()) {
++    return 0;
++  }
++  if (group == Group::kOptionalDigit) {
++    return text[0] >= '1' && text[0] <= '9' ? 1 : 0;
++  }
++  if (group == Group::kOptionalE) {
++    return text[0] == 'e' ? 1 : 0;
++  }
++  return 0;  // Group::kNone
++}
++
++// Tries to match |rule| against all of |tail|, which starts with the rule's
++// substituted_a. On success returns the original text for |tail|.
++std::optional<std::string> MatchRule(const Rule& rule, std::string_view tail) {
++  std::string_view after_a = tail.substr(rule.substituted_a.size());
++  const size_t max_group1 = MaxGroupLength(rule.group1, after_a);
++  for (size_t group1_length = 0; group1_length <= max_group1;
++       ++group1_length) {
++    std::string_view rest = after_a.substr(group1_length);
++    if (!rest.starts_with(rule.substituted_b)) {
++      continue;
++    }
++    std::string_view group2 = rest.substr(rule.substituted_b.size());
++    if (MaxGroupLength(rule.group2, group2) != group2.size()) {
++      continue;
++    }
++    std::string original(rule.original_a);
++    original.append(after_a.substr(0, group1_length));
++    original.append(rule.original_b);
++    original.append(group2);
++    original.append(rule.original_c);
++    return original;
++  }
++  return std::nullopt;
++}
++
++// Reverses the substitution that ends at the end of |name|, which is the text
++// before a ".qjz9zk". Like the regular expressions, uses the leftmost match.
++std::optional<std::string> UnsubstituteName(std::string_view name) {
++  for (const Rule& rule : kRules) {
++    for (size_t pos = name.find(rule.substituted_a);
++         pos != std::string_view::npos;
++         pos = name.find(rule.substituted_a, pos + 1)) {
++      std::optional<std::string> original = MatchRule(rule, name.substr(pos));
++      if (original) {
++        return std::string(name.substr(0, pos)) + *original;
++      }
++    }
++  }
++  return std::nullopt;
++}
++
++}  // namespace
++
++std::optional<std::string> UnsubstituteHost(std::string_view host) {
++  const std::string lower_host = base::ToLowerASCII(host);
++  std::string_view rest = lower_host;
++  if (!rest.ends_with(kSubstitutedTld)) {
++    return std::nullopt;
++  }
++
++  // Usually there is one substituted name, but a host can contain several
++  // (e.g. "google.com.google.com"). Each of them ends before a ".qjz9zk".
++  std::string result;
++  while (!rest.empty()) {
++    const size_t end = rest.find(kSubstitutedTld);
++    std::optional<std::string> original = UnsubstituteName(rest.substr(0, end));
++    if (!original) {
++      return std::nullopt;
++    }
++    result.append(*original);
++    rest.remove_prefix(end + kSubstitutedTld.size());
++  }
++  return result;
++}
++
++}  // namespace net
+--- /dev/null
++++ b/net/base/domain_unsubstitution.h
+@@ -0,0 +1,34 @@
++// Copyright 2026 The Cerium Browser Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef NET_BASE_DOMAIN_UNSUBSTITUTION_H_
++#define NET_BASE_DOMAIN_UNSUBSTITUTION_H_
++
++#include <optional>
++#include <string>
++#include <string_view>
++
++#include "net/base/net_export.h"
++
++namespace net {
++
++// ungoogled-chromium's domain substitution (domain_regex.list) rewrites Google
++// and a few other domain names in the source code into unresolvable names
++// under the made-up "qjz9zk" TLD, e.g.
++//
++//   clients2.google.com   -> clients2.9oo91e.qjz9zk
++//   update.googleapis.com -> update.9oo91eapis.qjz9zk
++//   fonts.googleapis.com  -> f0ntz.9oo91e8p1.qjz9zk
++//
++// UnsubstituteHost() reverses that mapping for a single hostname. Matching is
++// ASCII case-insensitive (GURL lower-cases hosts) and the result is lower
++// case. Returns std::nullopt if |host| is not a substituted hostname.
++//
++// The reverse rules must be kept in sync with domain_regex.list; Cerium's
++// utils/check_domain_unsubstitution.py verifies this.
++NET_EXPORT std::optional<std::string> UnsubstituteHost(std::string_view host);
++
++}  // namespace net
++
++#endif  // NET_BASE_DOMAIN_UNSUBSTITUTION_H_
+--- /dev/null
++++ b/net/base/domain_unsubstitution_unittest.cc
+@@ -0,0 +1,78 @@
++// Copyright 2026 The Cerium Browser Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "net/base/domain_unsubstitution.h"
++
++#include <optional>
++#include <string>
++
++#include "testing/gtest/include/gtest/gtest.h"
++
++namespace net {
++namespace {
++
++// The substituted names are what domain_regex.list produces; the expected
++// originals are spelled in pieces so domain substitution leaves them alone.
++TEST(DomainUnsubstitutionTest, ReversesEachRule) {
++  const struct {
++    const char* substituted;
++    std::string original;
++  } kCases[] = {
++      {"f0ntz.9oo91e8p1.qjz9zk", std::string("fonts.googleapis") + ".com"},
++      {"clients2.9oo91e.qjz9zk", std::string("clients2.google") + ".com"},
++      {"update.9oo91eapis.qjz9zk", std::string("update.googleapis") + ".com"},
++      {"chromewebstore.9oo91e.qjz9zk",
++       std::string("chromewebstore.google") + ".com"},
++      {"www.95tat1c.qjz9zk", std::string("www.gstatic") + ".com"},
++      {"ch40me.qjz9zk", std::string("chrome") + ".com"},
++      {"dev.ch40m1um.qjz9zk", std::string("dev.chromium") + ".org"},
++      {"m0z111a.qjz9zk", std::string("mozilla") + ".org"},
++      {"www.f8c3b00k.qjz9zk", std::string("www.facebook") + ".com"},
++      {"x.8pp2p8t.qjz9zk", std::string("x.appspot") + ".com"},
++      {"y0u1ub3-nocookie.qjz9zk", std::string("youtube-nocookie") + ".com"},
++      {"i.yt1mg.qjz9zk", std::string("i.ytimg") + ".com"},
++      {"mail.9ma1l.qjz9zk", std::string("mail.gmail") + ".com"},
++      {"ad.60u613cl1c4.n3t.qjz9zk", std::string("ad.doubleclick") + ".net"},
++      {"ad.60u613cl1c4.c0m.qjz9zk", std::string("ad.doubleclick") + ".com"},
++      {"proxy.9oo91e21p.qjz9zk", std::string("proxy.googlezip") + ".net"},
++      {"b3ac0n2.9vt1.qjz9zk", std::string("beacons.gvt1") + ".com"},
++      {"b3ac0n25.9vt2.qjz9zk", std::string("beacons5.gvt2") + ".com"},
++      {"lh3.99pht.qjz9zk", std::string("lh3.ggpht") + ".com"},
++      {"www.m1cr050ft.qjz9zk", std::string("www.microsoft") + ".com"},
++      {"l3lOO.qjz9zk", std::string("1e100") + ".net"},
++      {"developer.8n6r01d.qjz9zk", std::string("developer.android") + ".com"},
++      {"goo" ".gl.qjz9zk", std::string("goo") + ".gl"},
++      {"goo" ".gle.qjz9zk", std::string("goo") + ".gle"},
++      {"pr1v4cy54ndb0x.qjz9zk", std::string("privacysandbox") + ".com"},
++  };
++  for (const auto& test_case : kCases) {
++    EXPECT_EQ(test_case.original, UnsubstituteHost(test_case.substituted))
++        << test_case.substituted;
++  }
++}
++
++TEST(DomainUnsubstitutionTest, IsCaseInsensitive) {
++  EXPECT_EQ(std::string("clients2.google") + ".com",
++            UnsubstituteHost("CLIENTS2.9OO91E.QJZ9ZK"));
++}
++
++TEST(DomainUnsubstitutionTest, HandlesSeveralSubstitutions) {
++  EXPECT_EQ(std::string("www.google") + ".com.google" + ".com",
++            UnsubstituteHost("www.9oo91e.qjz9zk.9oo91e.qjz9zk"));
++}
++
++TEST(DomainUnsubstitutionTest, IgnoresOtherHosts) {
++  EXPECT_EQ(std::nullopt, UnsubstituteHost(""));
++  EXPECT_EQ(std::nullopt, UnsubstituteHost("qjz9zk"));
++  EXPECT_EQ(std::nullopt, UnsubstituteHost(".qjz9zk"));
++  EXPECT_EQ(std::nullopt, UnsubstituteHost("example.qjz9zk"));
++  EXPECT_EQ(std::nullopt, UnsubstituteHost("example.com"));
++  EXPECT_EQ(std::nullopt, UnsubstituteHost("www.9oo91e.qjz9zk.au"));
++  // Capture groups only accept what the forward rules can produce.
++  EXPECT_EQ(std::nullopt, UnsubstituteHost("9oo91e1.qjz9zk"));
++  EXPECT_EQ(std::nullopt, UnsubstituteHost("b3ac0n20.9vt1.qjz9zk"));
++}
++
++}  // namespace
++}  // namespace net
+--- /dev/null
++++ b/net/base/google_services_toggle.cc
+@@ -0,0 +1,41 @@
++// Copyright 2026 The Cerium Browser Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "net/base/google_services_toggle.h"
++
++#include <optional>
++#include <string>
++
++#include "net/base/domain_unsubstitution.h"
++#include "url/gurl.h"
++
++namespace net {
++
++BASE_FEATURE(kGoogleServices, base::FEATURE_DISABLED_BY_DEFAULT);
++
++bool IsGoogleServicesEnabled() {
++  // Querying a feature before the FeatureList exists returns its default
++  // state but is reported as an early access, so check for it explicitly.
++  return base::FeatureList::GetInstance() &&
++         base::FeatureList::IsEnabled(kGoogleServices);
++}
++
++GURL UnsubstituteURL(const GURL& url) {
++  if (!url.is_valid() || !url.has_host()) {
++    return url;
++  }
++  std::optional<std::string> host = UnsubstituteHost(url.host());
++  if (!host) {
++    return url;
++  }
++  GURL::Replacements replacements;
++  replacements.SetHostStr(*host);
++  return url.ReplaceComponents(replacements);
++}
++
++GURL MaybeUnsubstituteURL(const GURL& url) {
++  return IsGoogleServicesEnabled() ? UnsubstituteURL(url) : url;
++}
++
++}  // namespace net
+--- /dev/null
++++ b/net/base/google_services_toggle.h
+@@ -0,0 +1,43 @@
++// Copyright 2026 The Cerium Browser Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef NET_BASE_GOOGLE_SERVICES_TOGGLE_H_
++#define NET_BASE_GOOGLE_SERVICES_TOGGLE_H_
++
++#include "base/feature_list.h"
++#include "net/base/net_export.h"
++
++class GURL;
++
++namespace net {
++
++// Master switch for the Google integrations that ungoogled-chromium removes
++// and Cerium can restore at runtime: Chrome Web Store installs, extension and
++// component updates (e.g. the Widevine CDM) and spell-check dictionary
++// downloads. While it is enabled, requests to hosts renamed by domain
++// substitution are redirected to the real hosts instead of being blocked.
++//
++// Disabled by default, which is exactly ungoogled-chromium's behaviour. Users
++// turn it on in chrome://settings/system; the "google_services.enabled"
++// local-state pref is applied when the FeatureList is created, so a change
++// takes effect after a relaunch. --enable-features=GoogleServices and
++// --disable-features=GoogleServices override the pref.
++NET_EXPORT BASE_DECLARE_FEATURE(kGoogleServices);
++
++// Returns whether kGoogleServices is enabled. Unlike a direct
++// base::FeatureList::IsEnabled() call it may be used before the FeatureList
++// exists (e.g. very early in startup), in which case it returns false.
++NET_EXPORT bool IsGoogleServicesEnabled();
++
++// Returns |url| with its host passed through UnsubstituteHost(), or |url|
++// itself if the host was not renamed by domain substitution.
++NET_EXPORT GURL UnsubstituteURL(const GURL& url);
++
++// Returns UnsubstituteURL(url) while Google services are enabled, and |url|
++// unchanged otherwise.
++NET_EXPORT GURL MaybeUnsubstituteURL(const GURL& url);
++
++}  // namespace net
++
++#endif  // NET_BASE_GOOGLE_SERVICES_TOGGLE_H_

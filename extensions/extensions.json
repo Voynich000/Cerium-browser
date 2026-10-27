@@ -1,0 +1,36 @@
+{
+  "extensions": [
+    {
+      "name": "ublock_origin",
+      "display_name": "uBlock Origin",
+      "version": "1.75.0",
+      "url": "https://github.com/gorhill/uBlock/releases/download/1.75.0/uBlock0_1.75.0.chromium.zip",
+      "sha256": "393cf95709d1074d4022970e9014e434395c53a822387f1e25f43be97cf4b582",
+      "root": "uBlock0.chromium",
+      "pin": true,
+      "license": "GPL-3.0-or-later",
+      "source": "https://github.com/gorhill/uBlock/tree/1.75.0",
+      "tweaks": []
+    },
+    {
+      "name": "dark_reader",
+      "display_name": "Dark Reader",
+      "version": "4.9.133",
+      "url": "https://github.com/darkreader/darkreader/releases/download/v4.9.133/darkreader-chrome-mv3.zip",
+      "sha256": "a5a1a9c78d377fafd8c9190ce9d57b96f89bc95d21f077888601e4c445b20ebf",
+      "root": "",
+      "pin": true,
+      "license": "MIT",
+      "source": "https://github.com/darkreader/darkreader/tree/v4.9.133",
+      "tweaks": [
+        {
+          "file": "background/index.js",
+          "find": "chrome.tabs.create({url: getHelpURL()});",
+          "replace": "",
+          "count": 1,
+          "reason": "Do not open the Dark Reader help page when the browser installs it on first run."
+        }
+      ]
+    }
+  ]
+}
