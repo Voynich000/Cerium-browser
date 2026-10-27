@@ -1,3 +1,5 @@
+<p align="center"><img src="branding/cerium/logo_256.png" width="128" alt="Cerium logo"></p>
+
 # Cerium Browser
 
 Cerium is a web browser built on [ungoogled-chromium](https://github.com/ungoogled-software/ungoogled-chromium),
@@ -143,7 +145,31 @@ Some things deliberately still say Chromium:
 - "Chromium developers" on chrome://internals pages;
 - the user agent, which stays the standard Chrome one so websites keep working.
 
-The logo is still Chromium's; Cerium doesn't have its own icon yet.
+### Logo
+
+The logo is Chromium's own logo in Cerium's colours:
+
+| Part | Chromium | Cerium |
+|---|---|---|
+| Top segment | dark blue `#1967D2` | silver-gray `#8F969D` |
+| Lower-left segment | blue `#669DF6` | light silver-gray `#B8BEC4` |
+| Right segment | light blue `#AECBFA` | pale yellow `#F7E7A6` |
+| Centre | blue `#1A73E8` | orange `#F28A2E` |
+| Ring | white | white |
+
+`branding/cerium/logo.svg` and `logo-animation.svg` are Chromium's `product_logo.svg` and
+`product_logo_animation.svg` with those colours swapped. `branding/render.js` renders them into
+`branding/overlay/`, which mirrors 29 logo files in the Chromium source tree:
+
+- app icons from 16 to 256 px, at 1× and 2×;
+- the "cerium" wordmarks, in dark and white, using the Inter Display font;
+- the favicon and the SVG logos.
+
+The monochrome tray icon stays Chromium's, since it is already grey.
+
+`utils/rebrand.py` copies the overlay in at build time and stops the build if a Chromium update
+moved or resized any of those files. The rendered PNGs are committed, so building needs no
+renderer; run `node branding/render.js` only after changing the SVGs.
 
 ## Building (Linux)
 
@@ -168,7 +194,7 @@ inside it. `scripts/build.sh` takes these steps:
 3. Applies ungoogled-chromium's patches, then `patches/series`. That's the portablelinux build
    fixes followed by Cerium's patches.
 4. Runs domain substitution.
-5. Renames the browser to Cerium (`utils/rebrand.py`).
+5. Renames the browser to Cerium and swaps in its logos (`utils/rebrand.py`).
 6. Runs `utils/bundle_extensions.py`.
 7. Builds `chrome`.
 
@@ -220,7 +246,9 @@ needs python3, GNU patch and about 20 GB of disk.
 
 Linux (x86_64, arm64) is the supported target. The patches are not Linux-specific; for example,
 the bundled-extension folder is resolved per platform. Windows and macOS builds would need the
-ungoogled-chromium-windows or -macos build harness plus `patches/cerium/`.
+ungoogled-chromium-windows or -macos build harness plus `patches/cerium/`. They would also
+still show Chromium's blue icon: the Windows `.ico` and macOS `.icns` files aren't in
+`branding/overlay/` yet.
 
 ## Repository layout
 
@@ -234,7 +262,10 @@ utils/bundle_extensions.py     download, verify, sign and stage the extensions
 utils/crx3.py                  CRX3 packer and verifier
 utils/check_domain_unsubstitution.py  checks UnsubstituteHost() against domain_regex.list
 utils/test_crx3.py             tests for the CRX3 packer
-utils/rebrand.py               renames Chromium to Cerium in the UI strings
+utils/rebrand.py               renames Chromium to Cerium in the UI strings, applies the logos
+branding/cerium/               recoloured logo SVGs and large PNGs
+branding/overlay/              rendered logos, mirroring their paths in the Chromium tree
+branding/render.js             renders the overlay from the SVGs
 scripts/check-patches.sh       applies all patches without building
 scripts/, docker/, package/    build and packaging (from portablelinux)
 .github/                       CI (from portablelinux)

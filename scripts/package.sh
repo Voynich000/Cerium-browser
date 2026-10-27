@@ -74,7 +74,7 @@ tar vcf - "$_tarball_name" \
 
 # create AppImage
 rm -rf "$_app_dir"
-mkdir -p "$_app_dir/opt/cerium/" "$_app_dir/usr/share/icons/hicolor/48x48/apps/"
+mkdir -p "$_app_dir/opt/cerium/" "$_app_dir/usr/share/icons/hicolor/256x256/apps/"
 cp -r "$_tarball_dir"/* "$_app_dir/opt/cerium/"
 cp "$_root_dir/package/cerium.desktop" "$_app_dir"
 sed -i -e 's|Exec=cerium|Exec=AppRun|g' "$_app_dir/cerium.desktop"
@@ -89,8 +89,8 @@ export CHROME_WRAPPER="${THIS}"
 EOF
 chmod a+x "$_app_dir/AppRun"
 
-cp "${_app_dir}/opt/cerium/product_logo_48.png" "$_app_dir/usr/share/icons/hicolor/48x48/apps/cerium.png"
-cp "${_app_dir}/usr/share/icons/hicolor/48x48/apps/cerium.png" "$_app_dir"
+cp "$_root_dir/branding/cerium/logo_256.png" "$_app_dir/usr/share/icons/hicolor/256x256/apps/cerium.png"
+cp "${_app_dir}/usr/share/icons/hicolor/256x256/apps/cerium.png" "$_app_dir"
 
 export APPIMAGETOOL_APP_NAME="$_app_name"
 export VERSION="$_version"

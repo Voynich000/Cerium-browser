@@ -2,7 +2,7 @@
 # Copyright 2026 The Cerium Browser Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
-"""Renames the browser from "Chromium" to "Cerium" in its UI strings.
+"""Renames the browser from "Chromium" to "Cerium": UI strings and logos.
 
 Chromium keeps every string that names the product in "branded" resource
 files (chrome/app/chromium_strings.grd with settings_chromium_strings.grdp,
@@ -18,6 +18,11 @@ over to the new IDs (renaming the product in them too).
 "The Chromium Authors" (copyright attribution), "Chromium developers" and
 ChromiumOS names are left alone.
 
+It also copies the Cerium logos from branding/overlay/ over Chromium's
+(see branding/render.js). Every target must already exist with the same
+pixel size, so a Chromium update that moves or resizes a logo stops the
+build instead of leaving a Chromium logo behind.
+
 Run on a source tree after patching and domain substitution:
   rebrand.py <chromium src>
 It is idempotent: a second run finds nothing to rename.
@@ -25,8 +30,12 @@ It is idempotent: a second run finds nothing to rename.
 
 import argparse
 import re
+import shutil
+import struct
 import sys
 from pathlib import Path
+
+_OVERLAY = Path(__file__).resolve().parent.parent / 'branding' / 'overlay'
 
 OLD_NAME = 'Chromium'
 NEW_NAME = 'Cerium'
@@ -118,6 +127,29 @@ def _rename_branding(src):
     branding.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
 
+def _png_size(path):
+    header = path.read_bytes()[:24]
+    if header[:8] != b'\x89PNG\r\n\x1a\n':
+        raise SystemExit(f'{path}: not a PNG file')
+    return struct.unpack('>II', header[16:24])
+
+
+def _apply_logos(src):
+    """Copies branding/overlay/ over the Chromium logos. Returns the count."""
+    copied = 0
+    for logo in sorted(p for p in _OVERLAY.rglob('*') if p.is_file()):
+        relative = logo.relative_to(_OVERLAY)
+        target = src / relative
+        if not target.is_file():
+            raise SystemExit(f'rebrand: {relative} is not in the source tree any more')
+        if logo.suffix == '.png' and _png_size(logo) != _png_size(target):
+            raise SystemExit(f'rebrand: {relative} is {_png_size(target)} in the source '
+                             f'tree but {_png_size(logo)} in branding/overlay')
+        shutil.copyfile(logo, target)
+        copied += 1
+    return copied
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -151,6 +183,8 @@ def main():
             raise SystemExit(f'{grd}: translations lost while renaming: {lost}')
         print(f'rebrand: {grd}: renamed {len(id_map)} messages, '
               f'moved {moved} translations in {len(after)} locales')
+
+    print(f'rebrand: replaced {_apply_logos(src)} logo files')
 
 
 if __name__ == '__main__':
