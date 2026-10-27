@@ -100,24 +100,31 @@ jobs:
             echo "::error::Assets.car is still upstream's; the Cerium icon was not put in"
             exit 1
           fi
+          # Install it the way users do: copy it out of the disk image.
+          mkdir -p "$RUNNER_TEMP/installed"
+          ditto "$app" "$RUNNER_TEMP/installed/Chromium.app"
+          launch() {  # launch <app> <name>: prints the page, exits; stderr to <name>.log
+            perl -e 'alarm 120; exec @ARGV' "$1/Contents/MacOS/Chromium" --headless=new \
+              --no-first-run --user-data-dir="$RUNNER_TEMP/profile-$2" --dump-dom \
+              'data:text/html,<title>ok</title>' > "$RUNNER_TEMP/dom-$2.html" 2> "$RUNNER_TEMP/$2.log"
+          }
           # Control: upstream's own app, as downloaded.
           control=0
-          perl -e 'alarm 120; exec @ARGV' "$RUNNER_TEMP/test/Chromium.app/Contents/MacOS/Chromium" --headless=new \
-            --no-first-run --user-data-dir="$RUNNER_TEMP/profile-control" --dump-dom \
-            'data:text/html,<title>ok</title>' > "$RUNNER_TEMP/dom-control.html" 2>/dev/null || control=$?
-          echo "::notice::Upstream's own app: exit status $control, page $(grep -c '<title>ok</title>' "$RUNNER_TEMP/dom-control.html" || true)"
+          launch "$RUNNER_TEMP/test/Chromium.app" control || control=$?
+          echo "::notice::Upstream's own app: exit status $control, page $(grep -c '<title>ok</title>' "$RUNNER_TEMP/dom-control.html" || true), $(grep -c 'Network service crashed' "$RUNNER_TEMP/control.log" || true) network service crashes"
           # The signed app has to start (hardened runtime, entitlements,
           # library validation). It prints the page and exits.
           status=0
-          perl -e 'alarm 120; exec @ARGV' "$app/Contents/MacOS/Chromium" --headless=new \
-            --no-first-run --user-data-dir="$RUNNER_TEMP/profile" --dump-dom \
-            'data:text/html,<title>ok</title>' > "$RUNNER_TEMP/dom.html" 2> "$RUNNER_TEMP/app.log" || status=$?
+          launch "$RUNNER_TEMP/installed/Chromium.app" packaged || status=$?
+          cp "$RUNNER_TEMP/packaged.log" "$RUNNER_TEMP/app.log"
+          cp "$RUNNER_TEMP/dom-packaged.html" "$RUNNER_TEMP/dom.html"
           if [ "$status" != 0 ] || ! grep -q '<title>ok</title>' "$RUNNER_TEMP/dom.html"; then
             set +e +o pipefail
             trap - ERR
             {
               echo "The app exited with status $status. Its output:"
-              tail -c 2500 "$RUNNER_TEMP/app.log"
+              grep -v CVDisplayLink "$RUNNER_TEMP/app.log" | tail -c 2500
+              echo "Crash dumps: $(find "$RUNNER_TEMP/profile-packaged" -path '*Crashpad*' -type f 2>/dev/null | head -n 5)"
               report="$(ls -t ~/Library/Logs/DiagnosticReports/*.ips 2>/dev/null | head -n 1)"
               if [ -n "$report" ]; then
                 echo "Crash report $(basename "$report"):"
