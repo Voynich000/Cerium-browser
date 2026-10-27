@@ -86,6 +86,7 @@ jobs:
 
       - name: Check the disk image
         run: |
+          trap '_status=$?; echo "::error::line $LINENO: $BASH_COMMAND failed (exit status $_status)"' ERR
           mount="$(hdiutil attach -nobrowse -readonly "$RUNNER_TEMP/test.dmg" | awk -F '\t' '/\/Volumes\// { print $NF; exit }')"
           app="$mount/Chromium.app"
           resources="$app/Contents/Frameworks/Chromium Framework.framework/Resources"
