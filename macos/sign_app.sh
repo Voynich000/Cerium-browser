@@ -17,7 +17,10 @@
 #
 # Based on ungoogled-chromium-macos's sign_and_package_app.sh.
 
-set -euo pipefail
+set -Eeuo pipefail
+# Name the failing command; in GitHub Actions as an annotation, since the
+# output of a long step is easy to miss.
+trap '_status=$?; printf "%s%s: line %s: %s failed (exit status %s)\n" "${GITHUB_ACTIONS:+::error::}" "${0##*/}" "$LINENO" "$BASH_COMMAND" "$_status" >&2' ERR
 
 _root_dir="$(cd "$(dirname "$0")" && pwd)"
 _app="${1:?usage: sign_app.sh path/to/Cerium.app}"
