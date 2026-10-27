@@ -1,0 +1,41 @@
+# From ungoogled-chromium-macos 156.0.8078.47 (macOS build fixes), without its
+# set-bundle-identifier.patch, which cerium-macos/ replaces.
+ungoogled-chromium/macos/build-bindgen.patch
+ungoogled-chromium/macos/disable-clang-version-check.patch
+ungoogled-chromium/macos/disable-crashpad-handler.patch
+ungoogled-chromium/macos/disable-symbol-order-verification.patch
+ungoogled-chromium/macos/fix-build-with-rust.patch
+ungoogled-chromium/macos/fix-clang-format-path.patch
+ungoogled-chromium/macos/fix-disabling-safebrowsing.patch
+ungoogled-chromium/macos/fix-dsymutil.patch
+ungoogled-chromium/macos/no-unknown-warnings.patch
+ungoogled-chromium/macos/build-bindgen-target-override.patch
+ungoogled-chromium/macos/bindgen-disable-static.patch
+ungoogled-chromium/macos/set-rustc-nightly-capability.patch
+ungoogled-chromium/macos/revert-v8-sanitizer-changes.patch
+ungoogled-chromium/macos/fix-nasm-build-config.patch
+ungoogled-chromium/macos/fix-anyappleos-availability.patch
+ungoogled-chromium/macos/fix-build-without-crubit.patch
+ungoogled-chromium/macos/use-system-python.patch
+ungoogled-chromium/macos/fix-disable-verification-token.patch
+ungoogled-chromium/macos/fix-esbuild.patch
+ungoogled-chromium/macos/fix-typescript.patch
+ungoogled-chromium/macos/restore-typescript-js-compiler.patch
+ungoogled-chromium/macos/fix-gn-compatibility.patch
+ungoogled-chromium/macos/fix-gn-compatibility-chromium-156.patch
+ungoogled-chromium/macos/fix-typescript-isolated-declarations.patch
+ungoogled-chromium/macos/fix-complex-builtins.patch
+
+# Cerium (shared with Linux)
+cerium/add-google-services-switch.patch
+cerium/redirect-substituted-domains.patch
+cerium/restore-chrome-web-store.patch
+cerium/restore-extension-and-component-updates.patch
+cerium/restore-spellcheck-downloads.patch
+cerium/add-google-services-setting.patch
+cerium/add-bundled-extensions.patch
+cerium/rebrand-linux-identity.patch
+
+# Cerium: macOS only
+cerium-macos/set-bundle-identifier.patch
+cerium-macos/rebrand-macos-identity.patch

@@ -74,7 +74,9 @@ fetch_sources() {
 apply_patches() {
     if [ ! -f "${_src_dir}/.patched.stamp" ]; then
         "${_main_repo}/utils/prune_binaries.py" "${_src_dir}" "${_main_repo}/pruning.list"
-        "${_main_repo}/utils/patches.py" apply "${_src_dir}" "${_main_repo}/patches" "${_root}/patches"
+        # CERIUM_PATCHES_DIR=macos/patches (relative to the repository root)
+        # applies the macOS series instead; scripts/check-patches.sh uses it
+        "${_main_repo}/utils/patches.py" apply "${_src_dir}" "${_main_repo}/patches" "${_root}/${CERIUM_PATCHES_DIR:-patches}"
         touch "${_src_dir}/.patched.stamp"
     fi
 }

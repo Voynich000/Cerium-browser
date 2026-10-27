@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+_root_dir="$(dirname "$(greadlink -f "$0")")"
+_src_dir="${CHROMIUM_SRC_DIR:-$_root_dir/build/src}"
+_out_dir="$_src_dir/out/Default"
+# The app, framework and helpers are named after PRODUCT_FULLNAME, which
+# utils/rebrand.py sets to Cerium.
+_product="$(sed -n 's/^PRODUCT_FULLNAME=//p' "$_src_dir/chrome/app/theme/chromium/BRANDING")"
+_app="$_out_dir/$_product.app"
+_framework="$_app/Contents/Frameworks/$_product Framework.framework"
+_helpers="$_framework/Helpers"
+_libraries="$_framework/Libraries"
+_pkg_dmg="$_src_dir/chrome/installer/mac/pkg-dmg"
+
+# Sign every bundle with its own bundle identifier. If the code signing
+# identifier differs from CFBundleIdentifier, macOS privacy permissions such as
+# Local Network access do not take effect.
+# See https://github.com/ungoogled-software/ungoogled-chromium-macos/issues/361
+_bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$_app/Contents/Info.plist")"
+
+# Cerium has no Apple Developer ID, so it is signed ad hoc unless
+# MACOS_AD_HOC_SIGNING=0 and MACOS_CERTIFICATE_NAME (plus the notarization
+# credentials) are provided.
+_ad_hoc="${MACOS_AD_HOC_SIGNING:-1}"
+_target_dmg="${1:-}"
+if [[ -z "$_target_dmg" ]]; then
+  _chromium_version="$(cat "$_root_dir/ungoogled-chromium/chromium_version.txt")"
+  _ungoogled_revision="$(cat "$_root_dir/ungoogled-chromium/revision.txt")"
+  _target_dmg="$_root_dir/build/cerium-${_chromium_version}-${_ungoogled_revision}-$(uname -m)-macos.dmg"
+fi
+
+sign() {
+  if (( _ad_hoc )); then
+    codesign --sign - --force "$@"
+  else
+    codesign --sign "$MACOS_CERTIFICATE_NAME" --force --timestamp "$@"
+  fi
+}
+
+error() {
+  printf '::error::%s\n' "$*" >&2
+}
+
+warning() {
+  printf '::warning::%s\n' "$*" >&2
+}
+
+# Ship the bundled extensions (uBlock Origin, Dark Reader) and the default
+# preferences that pin them inside the framework, where the browser looks for
+# them (base::DIR_ASSETS). This has to happen before anything is signed.
+if [[ ! -d "$_out_dir/bundled_extensions" || ! -f "$_out_dir/initial_preferences" ]]; then
+  error "Run utils/bundle_extensions.py --output-dir $_out_dir first"
+  exit 1
+fi
+rm -rf "$_framework/Resources/bundled_extensions"
+cp -R "$_out_dir/bundled_extensions" "$_framework/Resources/"
+cp "$_out_dir/initial_preferences" "$_framework/Resources/"
+
+# Fix issue where macOS requests permission for incoming network connections
+# See https://github.com/ungoogled-software/ungoogled-chromium-macos/issues/17
+xattr -cs "$_app"
+
+# Sign the binary
+sign --identifier chrome_crashpad_handler --options=restrict,library,runtime,kill "$_helpers/chrome_crashpad_handler"
+sign --identifier "$_bundle_id.helper" --options restrict,library,runtime,kill "$_helpers/$_product Helper.app"
+sign --identifier "$_bundle_id.helper.renderer" --options restrict,kill,runtime --entitlements "$_root_dir/entitlements/helper-renderer-entitlements.plist" "$_helpers/$_product Helper (Renderer).app"
+sign --identifier "$_bundle_id.helper" --options restrict,kill,runtime --entitlements "$_root_dir/entitlements/helper-gpu-entitlements.plist" "$_helpers/$_product Helper (GPU).app"
+sign --identifier "$_bundle_id.framework.AlertNotificationService" --options restrict,library,runtime,kill "$_helpers/$_product Helper (Alerts).app"
+if [[ -d "$_helpers/$_product Helper (Aperitif).app" ]]; then
+  sign --identifier "$_bundle_id.helper" --options restrict,library,runtime,kill "$_helpers/$_product Helper (Aperitif).app"
+  sign --identifier "$_bundle_id.helper.renderer" --options restrict,kill,runtime --entitlements "$_root_dir/entitlements/helper-renderer-entitlements.plist" "$_helpers/$_product Helper (Aperitif Renderer).app"
+  sign --identifier "$_bundle_id.helper" --options restrict,kill,runtime --entitlements "$_root_dir/entitlements/helper-gpu-entitlements.plist" "$_helpers/$_product Helper (Aperitif GPU).app"
+  sign --identifier "$_bundle_id.framework.AlertNotificationService" --options restrict,library,runtime,kill "$_helpers/$_product Helper (Aperitif Alerts).app"
+fi
+sign --identifier app_mode_loader --options restrict,library,runtime,kill "$_helpers/app_mode_loader"
+sign --identifier web_app_shortcut_copier --options restrict,library,runtime,kill "$_helpers/web_app_shortcut_copier"
+
+# The dylibs bundled by Chromium vary by release. Sign the files that are
+# actually present instead of maintaining a version-dependent hard-coded list.
+for _dylib in "$_libraries"/*.dylib; do
+  [[ -e "$_dylib" ]] || continue
+  _dylib_name="$(basename "$_dylib" .dylib)"
+  sign --identifier "$_dylib_name" "$_dylib"
+done
+
+sign --identifier "$_bundle_id.framework" "$_framework"
+if (( _ad_hoc )); then
+  sign --identifier "$_bundle_id" --options restrict,library,runtime,kill --entitlements "$_root_dir/entitlements/app-entitlements.plist" "$_app"
+else
+  sign --identifier "$_bundle_id" --options restrict,library,runtime,kill --entitlements "$_root_dir/entitlements/app-entitlements.plist" --requirements "=designated => identifier \"$_bundle_id\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */" "$_app"
+fi
+
+# Verify the binary signature
+verify_dylib() {
+  local dylib="$1"
+  local signature_info
+
+  codesign --verify --strict --verbose=4 "$dylib"
+
+  if (( _ad_hoc )); then
+    return
+  fi
+
+  signature_info="$(codesign -dvvv "$dylib" 2>&1)"
+  printf '%s\n' "$signature_info"
+
+  if ! grep -q '^Authority=Developer ID Application:' <<< "$signature_info"; then
+    error "${dylib} is not signed with a Developer ID Application certificate"
+    return 1
+  fi
+
+  if ! grep -q '^Timestamp=' <<< "$signature_info"; then
+    error "${dylib} does not have a secure signing timestamp"
+    return 1
+  fi
+}
+
+# Check all framework dylibs to catch signing omissions in future releases.
+for _framework_dylib in "$_libraries"/*.dylib; do
+  verify_dylib "$_framework_dylib"
+done
+
+codesign --verify --deep --strict --verbose=4 "$_app"
+
+# Check that every bundle is signed with its own bundle identifier
+verify_identifier() {
+  local bundle="$1"
+  local info_plist="$2"
+  local bundle_id signing_id
+
+  bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info_plist")"
+  signing_id="$(codesign -dv "$bundle" 2>&1 | sed -n 's/^Identifier=//p')"
+
+  if [[ "$signing_id" != "$bundle_id" ]]; then
+    error "${bundle} is signed as ${signing_id} but its bundle identifier is ${bundle_id}"
+    return 1
+  fi
+}
+
+for _bundle in "$_app" "$_helpers"/*.app; do
+  verify_identifier "$_bundle" "$_bundle/Contents/Info.plist"
+done
+verify_identifier "$_framework" "$_framework/Resources/Info.plist"
+
+notarize_app() {
+  local archive="$TMPDIR/notarize.zip"
+  local result="$TMPDIR/notary-result.json"
+  local log="$TMPDIR/notary-log.json"
+  local status submission_id
+  local submit_exit=0
+  local credentials=(
+    --apple-id "$PROD_MACOS_NOTARIZATION_APPLE_ID"
+    --team-id "$PROD_MACOS_NOTARIZATION_TEAM_ID"
+    --password "$PROD_MACOS_NOTARIZATION_PWD"
+  )
+
+  ditto -c -k --keepParent "$_app" "$archive"
+
+  xcrun notarytool submit --wait --output-format json "${credentials[@]}" "$archive" \
+    > "$result" || submit_exit=$?
+
+  cat "$result"
+
+  status="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status", ""))' "$result" 2>/dev/null)" || status=""
+  submission_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id", ""))' "$result" 2>/dev/null)" || submission_id=""
+
+  if [[ -n "$submission_id" ]]; then
+    if xcrun notarytool log "${credentials[@]}" "$submission_id" > "$log"; then
+      cat "$log"
+    else
+      warning "Could not retrieve Apple's notarization log for submission $submission_id"
+      [[ ! -s "$log" ]] || cat "$log" || true
+    fi
+  fi
+
+  if [[ "$status" != "Accepted" ]]; then
+    if [[ -n "$status" ]]; then
+      error "Apple notarization failed with status: $status"
+    elif (( submit_exit != 0 )); then
+      error "notarytool submit failed with exit status $submit_exit"
+    else
+      error "Apple notarization returned no status"
+    fi
+    return 1
+  fi
+
+  if (( submit_exit != 0 )); then
+    error "notarytool submit exited with status $submit_exit despite reporting Accepted"
+    return "$submit_exit"
+  fi
+
+  if [[ -z "$submission_id" ]]; then
+    error "Apple notarization returned Accepted without a submission ID"
+    return 1
+  fi
+
+  xcrun stapler staple "$_app"
+  xcrun stapler validate "$_app"
+}
+
+if (( _ad_hoc )); then
+  printf 'Ad-hoc signing enabled; skipping notarization and stapling.\n'
+else
+  notarize_app
+fi
+
+# Package the app
+"$_pkg_dmg" \
+  --sourcefile --source "$_app" \
+  --target "$_target_dmg" \
+  --volname "$_product" --symlink /Applications:/Applications \
+  --format UDBZ --verbosity 2

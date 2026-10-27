@@ -22,7 +22,6 @@ if [ "$_prepare_only" = true ]; then
     fix_tool_downloading
     setup_toolchain
     gn_gen
-    bundle_extensions
 else
     _task_timeout=18000
     cd "$_src_dir"

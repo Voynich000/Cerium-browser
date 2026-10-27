@@ -1,0 +1,1395 @@
+# Cerium's copy of ungoogled-chromium-macos's building.yml (156.0.8078.47):
+# the build is split into resumable jobs that each stay under GitHub's 6 hour
+# limit. The harness lives in macos/, so steps run there and artifact paths
+# are prefixed with macos/. Cerium has no Apple Developer ID, so the app is
+# signed ad hoc and not notarized.
+name: Building Cerium for macOS
+
+defaults:
+  run:
+    shell: bash
+    working-directory: macos
+
+on:
+  workflow_call:
+    inputs:
+      arch:
+        required: true
+        type: string
+      os:
+        required: true
+        type: string
+
+
+jobs:
+  retrieve-resources:
+    name: Retrieve resources required for building
+    runs-on: ${{ inputs.os }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable Spotlight
+        run: sudo mdutil -a -i off
+      - name: Setup Python 3.13 (latest for depot_tools to work)
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Download and unpack required resources
+        run: ./github_fetch_resources.sh ${{ inputs.arch }} | tee -a github_actions_retrieve_resources.log
+      - name: List resources
+        run: ls -la
+      - name: Archive resources
+        run: ./github_pack_resources.sh | tee -a github_actions_retrieve_resources.log
+      - name: Upload resources
+        uses: actions/upload-artifact@v7
+        with:
+          name: cerium_macos_resources_${{ inputs.arch }}
+          path: macos/upload_build_resources/
+
+  build_job_01:
+    name: Start Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: retrieve-resources
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable Spotlight
+        run: sudo mdutil -a -i off
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Download resources
+        uses: actions/download-artifact@v8
+        with:
+          name: cerium_macos_resources_${{ inputs.arch }}
+          path: macos
+      - name: Unpack resources
+        run: ./github_unpack_resources.sh
+      - name: List resources
+        run: ls -la
+      - name: Prepare for building
+        run: ./github_before_build.sh ${{ inputs.arch }} | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_02:
+    name: Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_01
+    if: ${{needs.build_job_01.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_03:
+    name: Further Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_02
+    if: ${{needs.build_job_02.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download resumed build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_04:
+    name: Further Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_03
+    if: ${{needs.build_job_03.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download resumed build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_05:
+    name: Further Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_04
+    if: ${{needs.build_job_04.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download resumed build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_06:
+    name: Further Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_05
+    if: ${{needs.build_job_05.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download resumed build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_07:
+    name: Further Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_06
+    if: ${{needs.build_job_06.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download resumed build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_08:
+    name: Further Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_07
+    if: ${{needs.build_job_07.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download resumed build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_09:
+    name: Further Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_08
+    if: ${{needs.build_job_08.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download resumed build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_10:
+    name: Further Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_09
+    if: ${{needs.build_job_09.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download resumed build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_11:
+    name: Further Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_10
+    if: ${{needs.build_job_10.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download resumed build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_12:
+    name: Further Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_11
+    if: ${{needs.build_job_11.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download resumed build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_13:
+    name: Further Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_12
+    if: ${{needs.build_job_12.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download resumed build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_14:
+    name: Further Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_13
+    if: ${{needs.build_job_13.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download resumed build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_15:
+    name: Further Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_14
+    if: ${{needs.build_job_14.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download resumed build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_16:
+    name: Further Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_15
+    if: ${{needs.build_job_15.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download resumed build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_17:
+    name: Further Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_16
+    if: ${{needs.build_job_16.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download resumed build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_18:
+    name: Further Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_17
+    if: ${{needs.build_job_17.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download resumed build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_19:
+    name: Further Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_18
+    if: ${{needs.build_job_18.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download resumed build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+
+  build_job_20:
+    name: Further Resuming Building Cerium for macOS
+    runs-on: ${{ inputs.os }}
+    needs: build_job_19
+    if: ${{needs.build_job_19.outputs.status == 'running'}}
+    outputs:
+      status: ${{ steps.build.outputs.status }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Log Start Timestamp
+        run: date +%s > ./epoch_job_start.txt
+      - name: Cleanup Android Related Stuff
+        run: sudo rm -rf $ANDROID_HOME
+      - name: Copy GitHub specific scripts to git-root folder
+        run: cp -va ./ci/. ./
+      - name: Prepare Xcode
+        run: ./github_prepare_xcode.sh
+      - name: Disable spotlight
+        run: sudo mdutil -a -i off
+      - name: Get previous logs
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+      - name: Download resumed build
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+      - name: Setup Environment and Toolchain
+        run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
+      - name: Unpack archive of build
+        run: ./github_unpack_archive.sh
+      - name: Resume Build
+        id: build
+        run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Prepare archive of build as artifact
+        id: bake
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        run: ./github_prepare_artifacts.sh ${{ inputs.arch }} | tee -a github_actions_upload_${{ inputs.arch }}.log
+      - name: Upload part build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos/upload_part_build/
+          overwrite: true
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos/upload_logs/
+          overwrite: true
+      - name: Upload disk-image and hash file as artifact after build
+        if: ${{ steps.build.outputs.status == 'finished' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bake.outputs.file_name }}
+          path: |
+            macos/release_asset/${{ steps.bake.outputs.file_name }}
+            macos/${{ steps.bake.outputs.file_name }}.hashes.md
+          if-no-files-found: error

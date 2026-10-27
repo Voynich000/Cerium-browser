@@ -1,4 +1,6 @@
 /build/
+/macos/build/
+*.dmg
 /.config/
 /.gcs_entries
 *.tar

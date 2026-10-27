@@ -1,0 +1,18 @@
+blink_symbol_level=0
+chrome_pgo_phase=2
+enable_iterator_debugging=false
+enable_mse_mpeg2ts_stream_parser=true
+enable_rust=true
+enable_swiftshader=true
+enable_updater=false
+fatal_linker_warnings=false
+ffmpeg_branding="Chrome"
+is_clang=true
+is_debug=false
+is_official_build=true
+proprietary_codecs=true
+symbol_level=1
+use_thin_lto=true
+use_sysroot=false
+# Use Torque instance types without requiring matching libclang Python bindings.
+v8_use_metagen_instance_types=false

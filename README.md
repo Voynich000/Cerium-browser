@@ -11,10 +11,26 @@ with three additions:
 - **uBlock Origin built in.** This is the full Manifest V2 version (1.75.0), not uBlock Origin Lite.
 - **Dark Reader built in** (4.9.133).
 
-Base: ungoogled-chromium `156.0.8078.47-1` (Chromium 156.0.8078.47). The Linux build
-harness is taken from
+Releases have builds for:
+
+- **Linux** (x86_64 and arm64): `.AppImage` and `.tar.xz`;
+- **macOS on Apple Silicon** (M-series chips): `.dmg`. See [Installing on macOS](#installing-on-macos).
+
+Base: Chromium 156.0.8078.47 with ungoogled-chromium at commit `8025d45`, the commit its
+macOS release uses. The build harnesses are taken from
 [ungoogled-chromium-portablelinux](https://github.com/ungoogled-software/ungoogled-chromium-portablelinux)
-at the same tag.
+(Linux) and [ungoogled-chromium-macos](https://github.com/ungoogled-software/ungoogled-chromium-macos)
+(macOS) at their 156.0.8078.47 releases.
+
+## Installing on macOS
+
+Open the `.dmg` and drag Cerium to Applications. Cerium isn't signed with an Apple Developer ID
+or notarized by Apple, so macOS blocks it the first time:
+
+1. Open Cerium once; macOS says it can't verify it.
+2. Open **System Settings → Privacy & Security**, scroll down and click **Open Anyway**.
+
+Alternatively, run `xattr -dr com.apple.quarantine /Applications/Cerium.app` in Terminal.
 
 ## The Google services switch
 
@@ -118,6 +134,10 @@ Reader and lose their settings.
   gh secret set CERIUM_DARK_READER_KEY < keys/dark_reader.pem
   ```
 
+  Both workflows sign the extensions in their packaging step at the very end of a build. A
+  secret added while a build is running is still used. Without the secrets, a build creates new
+  keys and warns.
+
 Never publish the keys. Anyone holding them can produce extensions with the same IDs.
 
 ## Branding
@@ -198,23 +218,56 @@ inside it. `scripts/build.sh` takes these steps:
 6. Runs `utils/bundle_extensions.py`.
 7. Builds `chrome`.
 
-### GitHub Actions
+## Building (macOS)
 
-`.github/workflows/build.yml` builds x86_64 and arm64 on the free GitHub runners. The build runs
-as a chain of jobs, each under the 6-hour limit, with the build tree passed between them. A
-release is created when you push a tag such as `156.0.8078.47-1`. You can also start the
-workflow by hand from the Actions tab; that produces build artifacts but no release.
+`macos/` is Cerium's copy of the ungoogled-chromium-macos harness. Its patch series
+(`macos/patches/series`) is the macOS build fixes, then Cerium's shared patches, then two
+macOS-only ones in `macos/patches/cerium-macos/`:
 
-`.github/workflows/check.yml` runs on every push and pull request and takes about 15 minutes.
-It runs the tooling tests and applies the whole patch stack and domain substitution to the
-real Chromium source (`scripts/check-patches.sh`). You can run that script locally too; it
-needs python3, GNU patch and about 20 GB of disk.
+- the bundle identifier `io.github.voynich000.cerium`;
+- the `~/Library/Application Support/Cerium` profile, plus reading `initial_preferences` from
+  inside the app.
+
+On an Apple Silicon Mac with Xcode 26 and Homebrew:
+
+```sh
+brew install go ninja coreutils esbuild typescript
+pip3 install httplib2 cryptography --break-system-packages
+macos/build.sh arm64           # clones Chromium, patches, builds, packages build/cerium-*.dmg
+```
+
+The build renames the app (`Cerium.app`), recompiles the Dock icon's asset catalog with Xcode's
+`actool`, and copies the bundled extensions into the app before it is signed ad hoc.
+
+## GitHub Actions
+
+| Workflow | What it does |
+|---|---|
+| `build.yml` | Linux x86_64 and arm64 on the free Ubuntu runners |
+| `build-macos.yml` | macOS Apple Silicon on the free `macos-15` (M1) runners |
+| `check.yml` | Checks the Linux and macOS patch series on every push and pull request |
+
+The two build workflows split the build into a chain of jobs, each under GitHub's 6-hour job
+limit, and pass the build tree between them. A Linux build takes roughly a day; a macOS build
+on 3-core M1 runners can take longer.
+
+Pushing a tag such as `156.0.8078.47-1` starts both builds. Each one adds its files to the
+GitHub release for that tag. You can also start either workflow by hand from the Actions tab;
+that produces build artifacts but no release.
+
+`check.yml` takes about 15 minutes per platform. It runs the tooling tests and applies the
+whole patch stack, domain substitution and the Cerium rename to the real Chromium source
+(`scripts/check-patches.sh`). You can run that script locally too; it needs python3, GNU patch
+and about 20 GB of disk. Set `CERIUM_PATCHES_DIR=macos/patches` to check the macOS series.
 
 ## Updating
 
-1. Move the `ungoogled-chromium` submodule to the new tag.
-2. Copy that tag's patches and series entries from ungoogled-chromium-portablelinux into
-   `patches/ungoogled-chromium/portablelinux/` and `patches/series`.
+1. Move the `ungoogled-chromium` submodule to the new release. Use the commit that the new
+   ungoogled-chromium-macos release pins, so both platforms share it.
+2. Copy that release's patches and series entries from ungoogled-chromium-portablelinux into
+   `patches/ungoogled-chromium/portablelinux/` and `patches/series`. Do the same from
+   ungoogled-chromium-macos into `macos/patches/`; also refresh its scripts, `.ini` files and
+   `.github/workflows/building.yml` (as `build-macos-steps.yml`).
 3. Refresh `patches/cerium/*.patch` if they no longer apply. They are small and each has a
    description header.
 4. Run `python3 utils/check_domain_unsubstitution.py`. Add `--source-tree <chromium src>` for
@@ -224,9 +277,13 @@ needs python3, GNU patch and about 20 GB of disk.
 
 ## What has been verified
 
-- The whole patch stack applies cleanly to the Chromium 156.0.8078.47 source tarball. The order
-  is: binary pruning, ungoogled-chromium's 110 patches, the portablelinux patches, Cerium's
-  patches, then domain substitution. Each step uses ungoogled-chromium's own tools.
+- Both patch stacks apply cleanly to the Chromium 156.0.8078.47 source tarball, each followed by
+  domain substitution and the Cerium rename. Each step uses ungoogled-chromium's own tools.
+  - Linux: binary pruning, ungoogled-chromium's 110 patches, the portablelinux patches, then
+    Cerium's patches.
+  - macOS: ungoogled-chromium's patches, the macOS build fixes, Cerium's shared patches, then
+    the macOS-only ones.
+  - The Linux check also passed on GitHub Actions.
 - `UnsubstituteHost()` was checked against every substituted hostname in the Chromium 156
   source, about 1,700 cases, with no mismatches. Its gtest passes against Chromium's bundled
   googletest.
@@ -240,21 +297,22 @@ needs python3, GNU patch and about 20 GB of disk.
   nothing.
 - **Not done yet: compiling.** A Chromium build needs about 100 GB and hours of CPU time, so the
   C++ and TypeScript changes have not been compiled. They were written against the exact
-  Chromium 156 sources, but the first CI build is the real test.
+  Chromium 156 sources, but the first CI build is the real test. The macOS workflow, the ad hoc
+  signing and the `actool` step have only run on a Mac in their upstream form.
 
 ## Platforms
 
-Linux (x86_64, arm64) is the supported target. The patches are not Linux-specific; for example,
-the bundled-extension folder is resolved per platform. Windows and macOS builds would need the
-ungoogled-chromium-windows or -macos build harness plus `patches/cerium/`. They would also
-still show Chromium's blue icon: the Windows `.ico` and macOS `.icns` files aren't in
-`branding/overlay/` yet.
+- **Linux:** x86_64 and arm64.
+- **macOS:** Apple Silicon. The macOS harness can also build x86_64 (`macos/build.sh x86_64`),
+  but releases are Apple Silicon only.
+- **Windows:** not supported yet. The patches aren't platform-specific, but a build would need the
+  ungoogled-chromium-windows harness, and Windows `.ico` icons in `branding/overlay/`.
 
 ## Repository layout
 
 ```
 patches/series                 patch order (portablelinux fixes, then Cerium)
-patches/cerium/                 Cerium's Chromium patches
+patches/cerium/                Cerium's Chromium patches
 patches/ungoogled-chromium/    Linux build fixes from ungoogled-chromium-portablelinux
 extensions/extensions.json     pinned uBlock Origin / Dark Reader releases
 extensions/licenses/           their licenses (shipped with the browser)
@@ -267,9 +325,11 @@ branding/cerium/               recoloured logo SVGs and large PNGs
 branding/overlay/              rendered logos, mirroring their paths in the Chromium tree
 branding/render.js             renders the overlay from the SVGs
 scripts/check-patches.sh       applies all patches without building
-scripts/, docker/, package/    build and packaging (from portablelinux)
-.github/                       CI (from portablelinux)
-ungoogled-chromium/            submodule, pinned to 156.0.8078.47-1
+branding/make_macos_icons.py   recolours the macOS icon layers and builds app.icns
+scripts/, docker/, package/    Linux build and packaging (from portablelinux)
+macos/                         macOS build and packaging (from ungoogled-chromium-macos)
+.github/                       CI (from portablelinux and ungoogled-chromium-macos)
+ungoogled-chromium/            submodule, pinned to 8025d45 (156.0.8078.47, revision 1)
 ```
 
 ## License

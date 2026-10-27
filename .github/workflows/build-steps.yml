@@ -47,22 +47,6 @@ jobs:
           path: /tmp/chromium-builder.tar
           retention-days: 1
 
-      # Signing keys for the bundled extensions. Their extension IDs (and so the
-      # users' uBlock Origin / Dark Reader settings) depend on these keys; without
-      # the secrets every build gets new keys and new IDs.
-      - name: Write extension signing keys
-        env:
-          UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
-          DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
-        run: |
-          mkdir -p keys
-          chmod 700 keys
-          if [ -n "$UBLOCK_ORIGIN_KEY" ]; then printf '%s\n' "$UBLOCK_ORIGIN_KEY" > keys/ublock_origin.pem; fi
-          if [ -n "$DARK_READER_KEY" ]; then printf '%s\n' "$DARK_READER_KEY" > keys/dark_reader.pem; fi
-          if [ ! -f keys/ublock_origin.pem ] || [ ! -f keys/dark_reader.pem ]; then
-            echo "::warning::Extension signing key secrets are not set; this build gets new extension IDs."
-          fi
-
       - name: Prepare build tree
         uses: ./.github/actions/build
         with:
@@ -197,6 +181,12 @@ jobs:
 
   package:
     runs-on: ${{ inputs.runs-on }}
+    env:
+      # Signing keys for the bundled extensions (see utils/bundle_extensions.py).
+      # The extension IDs, and so users' uBlock Origin / Dark Reader settings,
+      # depend on them; without the secrets every build gets new IDs.
+      CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+      CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
     if: ${{ !cancelled() && !failure()
             && contains(fromJSON('["success", "skipped"]'),
                         needs.build_part_10.result) }}

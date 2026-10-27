@@ -1,0 +1,55 @@
+# macOS identity for Cerium: profile in ~/Library/Application Support/Cerium
+# (never sharing a Chromium profile), "Cerium Initial Preferences" as the
+# admin-provided defaults file, and the initial_preferences that Cerium ships
+# inside the app (pinning the bundled extensions) as a fallback.
+
+--- a/chrome/browser/mac/initial_prefs.mm
++++ b/chrome/browser/mac/initial_prefs.mm
+@@ -6,6 +6,7 @@
+ 
+ #include "base/apple/foundation_util.h"
+ #include "base/files/file_util.h"
++#include "base/path_service.h"
+ #include "build/branding_buildflags.h"
+ #include "chrome/common/channel_info.h"
+ #include "chrome/common/chrome_paths_internal.h"
+@@ -28,9 +29,9 @@ const char kLegacyInitialPreferencesFileName[] =
+     "Google Chrome Master Preferences";
+ #else
+ const NSSearchPathDirectory kSearchPath = NSApplicationSupportDirectory;
+-const char kInitialPreferencesDirectory[] = "Chromium";
+-const char kInitialPreferencesFileName[] = "Chromium Initial Preferences";
+-const char kLegacyInitialPreferencesFileName[] = "Chromium Master Preferences";
++const char kInitialPreferencesDirectory[] = "Cerium";
++const char kInitialPreferencesFileName[] = "Cerium Initial Preferences";
++const char kLegacyInitialPreferencesFileName[] = "Cerium Master Preferences";
+ #endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
+ 
+ }  // namespace
+@@ -76,6 +77,15 @@ base::FilePath InitialPrefsPath() {
+   if (base::PathExists(new_path))
+     return new_path;
+ 
++  // Then the defaults Cerium ships inside the app (pinning the bundled
++  // extensions): <framework>/Resources/initial_preferences.
++  base::FilePath bundled_path;
++  if (base::PathService::Get(base::DIR_ASSETS, &bundled_path)) {
++    bundled_path = bundled_path.Append(FILE_PATH_LITERAL("initial_preferences"));
++    if (base::PathExists(bundled_path))
++      return bundled_path;
++  }
++
+   return search_path.Append(kInitialPreferencesDirectory)
+       .Append(kLegacyInitialPreferencesFileName);
+ }
+--- a/chrome/common/chrome_paths_mac.mm
++++ b/chrome/common/chrome_paths_mac.mm
+@@ -37,7 +37,7 @@ char* ProductDirNameForBundle(NSBundle* chrome_bundle) {
+ #elif BUILDFLAG(GOOGLE_CHROME_BRANDING)
+       product_dir_name = "Google/Chrome";
+ #else
+-      product_dir_name = "Chromium";
++      product_dir_name = "Cerium";
+ #endif
+     }
+ 

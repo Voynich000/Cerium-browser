@@ -67,6 +67,12 @@ const WORDMARKS = [
   ['components/resources/default_200_percent/chromium/product_logo_white.png', 342, 64, TEXT_WHITE],
 ];
 
+// macOS app icons for macOS 12-15 (macOS 26 uses the layered AppIcon.icon):
+// the logo on a white rounded square laid out on Apple's 1024 px icon grid.
+// branding/make_macos_icons.py builds app.icns from them.
+const MAC_APPICONSET = 'chrome/app/theme/chromium/mac/Assets.xcassets/AppIcon.appiconset';
+const MAC_ICONS = [16, 32, 64, 128, 256, 512, 1024];
+
 // Standalone files for packaging and the README.
 const STANDALONE = [
   ['cerium/logo_256.png', 256],
@@ -109,6 +115,22 @@ const img = (svg, size) =>
                      transform:translateY(-${Math.round(height * 0.04)}px)">cerium</span>
       </div>`;
     await render(page, html, width, height, path.join(overlay, file));
+  }
+
+  for (const size of MAC_ICONS) {
+    const k = size / 1024;
+    const html = `
+      <div style="width:${size}px;height:${size}px;display:flex;align-items:center;
+                  justify-content:center">
+        <div style="width:${824 * k}px;height:${824 * k}px;border-radius:${185 * k}px;
+                    background:linear-gradient(#FFFFFF,#F1F2F4);
+                    box-shadow:0 ${10 * k}px ${22 * k}px rgba(0,0,0,0.28);
+                    display:flex;align-items:center;justify-content:center">
+          ${img(LOGO, Math.round(700 * k))}
+        </div>
+      </div>`;
+    await render(page, html, size, size,
+                 path.join(overlay, MAC_APPICONSET, `appicon_${size}.png`));
   }
 
   // Vector logos used by internal pages.

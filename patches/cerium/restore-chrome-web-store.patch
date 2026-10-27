@@ -61,7 +61,22 @@
  #include "net/base/url_util.h"
  #include "net/traffic_annotation/network_traffic_annotation.h"
  #include "ui/base/l10n/l10n_util.h"
-@@ -481,6 +482,26 @@ void WebstoreInstaller::DownloadNextPendingModule() {
+@@ -98,9 +99,13 @@ const char kAuthUserQueryKey[] = "authuser";
+ 
+ constexpr base::TimeDelta kTimeRemainingThreshold = base::Seconds(1);
+ 
++// Folder for downloading crx files from the webstore. This is used so that the
++// crx files don't go via the usual downloads folder.
++const base::FilePath::CharType kWebstoreDownloadFolder[] =
++    FILE_PATH_LITERAL("Webstore Downloads");
++
+ base::FilePath* g_download_directory_for_tests = nullptr;
+ 
+-[[maybe_unused]]
+ base::FilePath GetDownloadFilePath(const base::FilePath& download_directory,
+                                    const ExtensionId& id) {
+   // Ensure the download directory exists. TODO(asargent) - make this use
+@@ -477,6 +482,26 @@ void WebstoreInstaller::DownloadNextPendingModule() {
  
  void WebstoreInstaller::DownloadCrx(const ExtensionId& extension_id,
                                      InstallSource source) {
@@ -88,7 +103,7 @@
  }
  
  // http://crbug.com/40957413
-@@ -635,6 +656,27 @@ void WebstoreInstaller::UpdateDownloadProgress() {
+@@ -631,6 +656,27 @@ void WebstoreInstaller::UpdateDownloadProgress() {
  void WebstoreInstaller::StartCrxInstaller(const DownloadItem& download) {
    DCHECK_CURRENTLY_ON(BrowserThread::UI);
    DCHECK(!crx_installer_.get());

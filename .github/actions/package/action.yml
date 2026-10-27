@@ -16,6 +16,18 @@ runs:
       shell: bash
       run: bash ./.github/scripts/import-cache.sh
 
+    - name: Bundle uBlock Origin and Dark Reader
+      shell: bash
+      run: |
+        sudo apt-get update && sudo apt-get install -y python3-cryptography
+        mkdir -p keys && chmod 700 keys
+        if [ -n "${CERIUM_UBLOCK_ORIGIN_KEY:-}" ]; then printf '%s\n' "$CERIUM_UBLOCK_ORIGIN_KEY" > keys/ublock_origin.pem; fi
+        if [ -n "${CERIUM_DARK_READER_KEY:-}" ]; then printf '%s\n' "$CERIUM_DARK_READER_KEY" > keys/dark_reader.pem; fi
+        if [ ! -f keys/ublock_origin.pem ] || [ ! -f keys/dark_reader.pem ]; then
+          echo "::warning::Extension signing key secrets are not set; this build gets new extension IDs."
+        fi
+        python3 utils/bundle_extensions.py --output-dir build/src/out/Default --keys-dir keys
+
     - name: Package as AppImage with Docker
       shell: bash
       run: bash ./package/docker-package.sh

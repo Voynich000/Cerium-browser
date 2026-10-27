@@ -15,7 +15,16 @@ permissions:
 
 jobs:
   check:
+    name: Check patches (${{ matrix.platform }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            patches: patches
+          - platform: macos
+            patches: macos/patches
     steps:
       - uses: actions/checkout@v4
         with: { submodules: true }
@@ -36,4 +45,6 @@ jobs:
           df -h .
 
       - name: Apply all patches to the Chromium source
+        env:
+          CERIUM_PATCHES_DIR: ${{ matrix.patches }}
         run: bash scripts/check-patches.sh

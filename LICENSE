@@ -33,5 +33,10 @@ are derived from ungoogled-chromium-portablelinux
 (https://github.com/ungoogled-software/ungoogled-chromium-portablelinux),
 Copyright 2022 The ungoogled-chromium Authors, under the license above.
 
+The macOS build harness in macos/ (scripts, CI steps, patches/ and
+entitlements/) and .github/workflows/build-macos-steps.yml are derived from
+ungoogled-chromium-macos (https://github.com/ungoogled-software/ungoogled-chromium-macos),
+Copyright The ungoogled-chromium Authors, under the license above.
+
 The bundled extensions keep their own licenses: uBlock Origin is GPL-3.0-or-later
 and Dark Reader is MIT (see extensions/licenses/).
