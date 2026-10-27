@@ -117,6 +117,10 @@ jobs:
             try ours "$RUNNER_TEMP/v/ours/Chromium.app"
             try ours-novalidate "$RUNNER_TEMP/v/ours/Chromium.app" --disable-features=ValidateNetworkServiceProcessIdentity
             try plain-adhoc "$RUNNER_TEMP/v/plain/Chromium.app"
+            try ours-mockkeychain "$RUNNER_TEMP/v/ours/Chromium.app" --use-mock-keychain
+            try control-mockkeychain "$RUNNER_TEMP/test/Chromium.app" --use-mock-keychain
+            # Which keychain items the runs created, and their access lists
+            security dump-keychain 2>/dev/null | grep -A2 -i 'safe storage' | head -n 20
           } > "$RUNNER_TEMP/variants.txt" 2>&1
           msg="$(cat "$RUNNER_TEMP/variants.txt")"; msg="${msg//'%'/'%25'}"; msg="${msg//$'\n'/'%0A'}"
           echo "::notice::Variants:%0A$msg"
