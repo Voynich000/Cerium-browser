@@ -62,6 +62,7 @@ jobs:
       - name: Diagnose signing
         continue-on-error: true
         run: |
+          set +e
           f="$RUNNER_TEMP/test/Chromium.app/Contents/Frameworks/Chromium Framework.framework/Helpers/chrome_crashpad_handler"
           cp "$f" "$RUNNER_TEMP/crashpad-copy"
           {
