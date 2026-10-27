@@ -1,0 +1,86 @@
+name: Test macOS packaging
+
+# Runs the publish workflow's packaging (macos/package_dmg.sh: app icon,
+# bundled extensions, ad hoc signing, disk image) on ungoogled-chromium-macos's
+# latest Apple Silicon release, whose Chromium.app has the same layout as
+# Cerium.app. This tests packaging changes in minutes instead of after a full
+# build. The extensions are packed with throwaway keys.
+on:
+  push:
+    paths:
+      - 'macos/package_dmg.sh'
+      - 'macos/sign_app.sh'
+      - 'macos/compile_icon.py'
+      - 'macos/entitlements/**'
+      - 'utils/bundle_extensions.py'
+      - 'utils/crx3.py'
+      - 'extensions/**'
+      - '.github/workflows/test-macos-packaging.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  package:
+    name: Package ungoogled-chromium like Cerium
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Use Xcode 26
+        run: |
+          xcode="$(ls -d /Applications/Xcode_26*.app | grep -iv beta | sort -V | tail -n 1)"
+          echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
+          echo "Using $xcode"
+
+      - name: Install Python packages
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet cryptography
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+
+      - name: Get ungoogled-chromium for macOS
+        run: |
+          gh release download --repo ungoogled-software/ungoogled-chromium-macos \
+            --pattern '*arm64*.dmg' --dir "$RUNNER_TEMP/upstream"
+          dmg="$(ls "$RUNNER_TEMP"/upstream/*.dmg | head -n 1)"
+          echo "::notice::Testing with $(basename "$dmg")"
+          mount="$(hdiutil attach -nobrowse -readonly "$dmg" | awk -F '\t' '/\/Volumes\// { print $NF; exit }')"
+          mkdir -p "$RUNNER_TEMP/test"
+          ditto "$mount/Chromium.app" "$RUNNER_TEMP/test/Chromium.app"
+          hdiutil detach "$mount"
+          shasum -a 256 < "$RUNNER_TEMP/test/Chromium.app/Contents/Resources/Assets.car" > "$RUNNER_TEMP/upstream-icon.sha256"
+
+      - name: Package
+        run: macos/package_dmg.sh "$RUNNER_TEMP/test/Chromium.app" "$RUNNER_TEMP/test.dmg"
+
+      - name: Check the disk image
+        run: |
+          mount="$(hdiutil attach -nobrowse -readonly "$RUNNER_TEMP/test.dmg" | awk -F '\t' '/\/Volumes\// { print $NF; exit }')"
+          app="$mount/Chromium.app"
+          resources="$app/Contents/Frameworks/Chromium Framework.framework/Resources"
+          ls -la "$mount"
+          test -L "$mount/Applications"
+          test -f "$mount/How to open Chromium.txt"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          cat "$resources/initial_preferences"
+          extensions="$(cd "$resources/bundled_extensions" && ls *.crx | tr '\n' ' ')"
+          # The icon was replaced by Cerium's.
+          ! cmp -s <(shasum -a 256 < "$app/Contents/Resources/Assets.car") "$RUNNER_TEMP/upstream-icon.sha256"
+          # The signed app has to start (hardened runtime, entitlements,
+          # library validation). It prints the page and exits.
+          perl -e 'alarm 120; exec @ARGV' "$app/Contents/MacOS/Chromium" --headless=new \
+            --no-first-run --user-data-dir="$RUNNER_TEMP/profile" --dump-dom \
+            'data:text/html,<title>ok</title>' > "$RUNNER_TEMP/dom.html"
+          grep -q '<title>ok</title>' "$RUNNER_TEMP/dom.html"
+          size="$(du -h "$RUNNER_TEMP/test.dmg" | cut -f 1)"
+          echo "::notice::Packaged $size disk image; extensions: $extensions; the signed app starts"
+          hdiutil detach "$mount"
