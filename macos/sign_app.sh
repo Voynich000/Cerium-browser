@@ -38,12 +38,24 @@ _identity="${MACOS_SIGNING_IDENTITY:-}"
 _bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$_app/Contents/Info.plist")"
 
 sign() {
-  local output
+  local output arg
   local status=0
+  local previous=
+  local args=()
+  for arg in "$@"; do
+    if [[ -z "$_identity" && ( "$previous" == --options || "$arg" == --options=* ) ]]; then
+      # Library validation only lets a process load code from its own team,
+      # and ad hoc signatures have no team: the app could not load its own
+      # framework. Keep the other hardening options.
+      arg="$(sed -E 's/(^|[=,])library(,|$)/\1/; s/,$//' <<< "$arg")"
+    fi
+    args+=("$arg")
+    previous="$arg"
+  done
   if [[ -z "$_identity" ]]; then
-    output="$(codesign --sign - --force "$@" 2>&1)" || status=$?
+    output="$(codesign --sign - --force "${args[@]}" 2>&1)" || status=$?
   else
-    output="$(codesign --sign "$_identity" --force --timestamp "$@" 2>&1)" || status=$?
+    output="$(codesign --sign "$_identity" --force --timestamp "${args[@]}" 2>&1)" || status=$?
   fi
   [[ -z "$output" ]] || printf '%s\n' "$output"
   if (( status != 0 )); then
