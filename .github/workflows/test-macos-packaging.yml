@@ -59,6 +59,27 @@ jobs:
           hdiutil detach "$mount"
           shasum -a 256 < "$RUNNER_TEMP/test/Chromium.app/Contents/Resources/Assets.car" > "$RUNNER_TEMP/upstream-icon.sha256"
 
+      - name: Diagnose signing
+        continue-on-error: true
+        run: |
+          f="$RUNNER_TEMP/test/Chromium.app/Contents/Frameworks/Chromium Framework.framework/Helpers/chrome_crashpad_handler"
+          cp "$f" "$RUNNER_TEMP/crashpad-copy"
+          {
+            ls -le@ "$f"
+            xattr -l "$f"
+            file "$f"
+            codesign -dvvv "$f" 2>&1 | head -20
+            echo "-- re-sign copy:"
+            codesign --sign - --force --options=restrict,library,runtime,kill --verbose=4 "$RUNNER_TEMP/crashpad-copy" 2>&1; echo "status $?"
+            echo "-- re-sign copy, plain:"
+            codesign --sign - --force --verbose=4 "$RUNNER_TEMP/crashpad-copy" 2>&1; echo "status $?"
+            echo "-- in place:"
+            codesign --sign - --force --verbose=4 "$f" 2>&1; echo "status $?"
+          } > "$RUNNER_TEMP/diag.txt" 2>&1
+          msg="$(cat "$RUNNER_TEMP/diag.txt")"
+          msg="${msg//'%'/'%25'}"; msg="${msg//$'\n'/'%0A'}"
+          echo "::notice::$msg"
+
       - name: Package
         run: macos/package_dmg.sh "$RUNNER_TEMP/test/Chromium.app" "$RUNNER_TEMP/test.dmg"
 
