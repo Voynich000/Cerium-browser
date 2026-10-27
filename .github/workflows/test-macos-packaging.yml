@@ -100,6 +100,12 @@ jobs:
             echo "::error::Assets.car is still upstream's; the Cerium icon was not put in"
             exit 1
           fi
+          # Control: upstream's own app, as downloaded.
+          control=0
+          perl -e 'alarm 120; exec @ARGV' "$RUNNER_TEMP/test/Chromium.app/Contents/MacOS/Chromium" --headless=new \
+            --no-first-run --user-data-dir="$RUNNER_TEMP/profile-control" --dump-dom \
+            'data:text/html,<title>ok</title>' > "$RUNNER_TEMP/dom-control.html" 2>/dev/null || control=$?
+          echo "::notice::Upstream's own app: exit status $control, page $(grep -c '<title>ok</title>' "$RUNNER_TEMP/dom-control.html" || true)"
           # The signed app has to start (hardened runtime, entitlements,
           # library validation). It prints the page and exits.
           status=0
@@ -109,14 +115,27 @@ jobs:
           if [ "$status" != 0 ] || ! grep -q '<title>ok</title>' "$RUNNER_TEMP/dom.html"; then
             {
               echo "The app exited with status $status. Its output:"
-              tail -c 3000 "$RUNNER_TEMP/app.log"
+              tail -c 2500 "$RUNNER_TEMP/app.log"
               report="$(ls -t ~/Library/Logs/DiagnosticReports/*.ips 2>/dev/null | head -n 1)"
               if [ -n "$report" ]; then
-                echo "Crash report $report:"
-                grep -E '"(exception|termination|asi|crashed|faultingThread|namespace|indicator|reasons|details)"' "$report" | head -n 30
+                echo "Crash report $(basename "$report"):"
+                python3 - "$report" <<'PY'
+          import json, sys
+          _, _, body = open(sys.argv[1]).read().partition('\n')
+          data = json.loads(body)
+          for key in ('exception', 'termination', 'asi', 'ktriageinfo'):
+              if key in data:
+                  print(key, json.dumps(data[key])[:700])
+          threads = data.get('threads') or [{}]
+          images = data.get('usedImages', [])
+          for frame in threads[data.get('faultingThread', 0)].get('frames', [])[:15]:
+              index = frame.get('imageIndex')
+              name = images[index].get('name', '?') if index is not None and index < len(images) else '?'
+              print(' ', name, frame.get('symbol', ''), frame.get('imageOffset', ''))
+          PY
               fi
             } > "$RUNNER_TEMP/failure.txt" 2>&1
-            msg="$(cat "$RUNNER_TEMP/failure.txt")"; msg="${msg//'%'/'%25'}"; msg="${msg//$'\n'/'%0A'}"
+            msg="$(head -c 6000 "$RUNNER_TEMP/failure.txt")"; msg="${msg//'%'/'%25'}"; msg="${msg//$'\n'/'%0A'}"
             echo "::error::$msg"
             exit 1
           fi
