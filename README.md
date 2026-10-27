@@ -339,6 +339,13 @@ staples and checks the app the way Gatekeeper does.
   moved about 46,000 translations to their new fingerprints, with none lost. Spot checks in
   German, Japanese, Chinese, Russian, Arabic and Hindi show "Cerium". A second run changes
   nothing.
+- The macOS packaging was tested (`test-macos-packaging.yml`) on ungoogled-chromium's own Apple
+  Silicon release, which has the same layout as Cerium.app. The test compiles the icon, adds both
+  extensions, signs ad hoc and builds the disk image. Then it installs the app from the image and
+  launches it twice; the app shows a page and quits cleanly. This found three problems, now fixed:
+  - codesign refused files that carried Finder metadata;
+  - with ad hoc signing, library validation stopped the app from loading its own framework;
+  - Chromium's keychain item name was shared with any installed Chromium.
 - **Not done yet: compiling.** A Chromium build needs about 100 GB and hours of CPU time, so the
   C++ and TypeScript changes have not been compiled. They were written against the exact
   Chromium 156 sources, but the first CI build is the real test. The macOS build and publish
