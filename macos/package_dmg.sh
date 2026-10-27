@@ -3,7 +3,8 @@
 #
 #   package_dmg.sh path/to/Cerium.app path/to/cerium.dmg
 #
-# 1. copies the app (the original is left alone);
+# 1. copies the app (the original is left alone) and puts Cerium's icon in
+#    it (compile_icon.py, needs Xcode 26);
 # 2. adds the bundled extensions (uBlock Origin, Dark Reader) and the
 #    initial_preferences that pin them, inside the framework where the browser
 #    looks for them (base::DIR_ASSETS); keys come from ../keys (see
@@ -30,6 +31,11 @@ _framework="$_app/Contents/Frameworks/$_product Framework.framework"
 
 mkdir -p "$_staging"
 ditto "$_source_app" "$_app"
+
+# The Dock and Finder icon: Chromium's build bundles Chromium's precompiled
+# Assets.car, so compile Cerium's (needs Xcode 26) and replace it.
+python3 "$_root_dir/compile_icon.py" --output "$_app/Contents/Resources/Assets.car"
+cp "$_repo_dir/branding/overlay/chrome/app/theme/chromium/mac/app.icns" "$_app/Contents/Resources/app.icns"
 
 python3 "$_repo_dir/utils/bundle_extensions.py" \
   --output-dir "$_work/extensions" \

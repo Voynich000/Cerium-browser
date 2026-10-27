@@ -2,26 +2,25 @@
 # Copyright 2026 The Cerium Browser Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
-"""Builds Cerium's macOS icon files in branding/overlay/.
+"""Builds Cerium's macOS icon files.
 
 Run after `node branding/render.js` (which renders the app icon bitmaps),
 with an unmodified Chromium source tree for the files that are recoloured:
 
   python3 branding/make_macos_icons.py --chromium-src <chromium src>
 
-It writes, under chrome/app/theme/chromium/mac/:
-- AppIcon.icon/Assets/*.svg: Chromium's macOS 26 icon layers with the logo
-  colours swapped (the same mapping as branding/cerium/logo.svg);
-- AppIcon.icon/Assets/ring.png and Assets.xcassets/Icon.iconset/*.png: flat
-  bitmaps of the logo, recoloured pixel by pixel;
-- app.icns: built from the rendered AppIcon.appiconset bitmaps.
-
-Assets.car, the compiled asset catalog that macOS actually reads, can only
-be made with Xcode's actool, so the macOS build compiles it from these files
-(tools/mac/icons/compile_car.py).
+It writes:
+- branding/macos/: Chromium's chrome/app/theme/chromium/mac/AppIcon.icon and
+  Assets.xcassets with Cerium's colours: the macOS 26 icon layers (SVG, the
+  same colour mapping as branding/cerium/logo.svg) and the flat bitmaps,
+  recoloured pixel by pixel; macos/compile_icon.py compiles them into the
+  Assets.car that macOS reads, which only Xcode's actool can do;
+- branding/overlay/chrome/app/theme/chromium/mac/app.icns, built from the
+  rendered AppIcon.appiconset bitmaps.
 """
 
 import argparse
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -94,28 +93,33 @@ def main():
                         help='Unmodified Chromium source tree')
     args = parser.parse_args()
     source = args.chromium_src / _MAC
-    overlay = _ROOT / 'overlay' / _MAC
+    target = _ROOT / 'macos'
 
+    for name in ['AppIcon.icon/icon.json', 'Assets.xcassets/Contents.json',
+                 'Assets.xcassets/AppIcon.appiconset/Contents.json']:
+        (target / name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source / name, target / name)
+
+    (target / 'AppIcon.icon' / 'Assets').mkdir(parents=True, exist_ok=True)
     for svg in sorted((source / 'AppIcon.icon' / 'Assets').glob('*.svg')):
-        target = overlay / 'AppIcon.icon' / 'Assets' / svg.name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(recolor_svg(svg.read_text()))
+        (target / 'AppIcon.icon' / 'Assets' / svg.name).write_text(recolor_svg(svg.read_text()))
 
     for name in ['AppIcon.icon/Assets/ring.png',
                  'Assets.xcassets/Icon.iconset/icon_256x256.png',
                  'Assets.xcassets/Icon.iconset/icon_256x256@2x.png']:
-        target = overlay / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        recolor_flat_png(Image.open(source / name)).save(target, optimize=True)
+        (target / name).parent.mkdir(parents=True, exist_ok=True)
+        recolor_flat_png(Image.open(source / name)).save(target / name, optimize=True)
 
-    appiconset = overlay / 'Assets.xcassets' / 'AppIcon.appiconset'
+    appiconset = target / 'Assets.xcassets' / 'AppIcon.appiconset'
     largest = Image.open(appiconset / 'appicon_1024.png').convert('RGBA')
+    overlay = _ROOT / 'overlay' / _MAC
+    overlay.mkdir(parents=True, exist_ok=True)
     largest.save(overlay / 'app.icns',
                  append_images=[
                      Image.open(appiconset / f'appicon_{size}.png').convert('RGBA')
                      for size in (16, 32, 64, 128, 256, 512)
                  ])
-    print(f'wrote macOS icons to {overlay}')
+    print(f'wrote macOS icons to {target} and {overlay}')
 
 
 if __name__ == '__main__':

@@ -69,10 +69,9 @@ python3 "$_main_repo/utils/patches.py" apply "$_src_dir" "$_main_repo/patches" "
 
 python3 "$_main_repo/utils/domain_substitution.py" apply -r "$_main_repo/domain_regex.list" -f "$_main_repo/domain_substitution.list" "$_src_dir"
 
-# Cerium: rename the browser, swap in its logos and recompile the asset
-# catalog that holds the Dock icon
+# Cerium: rename the browser and swap in its logos (package_dmg.sh adds the
+# Dock icon)
 python3 "$_root_dir/../utils/rebrand.py" "$_src_dir"
-(cd "$_src_dir" && python3 tools/mac/icons/compile_car.py chrome/app/theme/chromium/mac/Assets.xcassets)
 # Set build flags
 cat "$_main_repo/flags.gn" "$_root_dir/flags.macos.gn" > "$_src_dir/out/Default/args.gn"
 

@@ -1,0 +1,47 @@
+name: Check macOS icon
+
+# Compiles the macOS app icon (branding/macos/) with Xcode's actool, as the
+# publish workflow does, whenever it or the compiler changes. The compiled
+# Assets.car is kept as an artifact.
+on:
+  push:
+    paths:
+      - 'branding/macos/**'
+      - 'macos/compile_icon.py'
+      - '.github/workflows/check-macos-icon.yml'
+  pull_request:
+    paths:
+      - 'branding/macos/**'
+      - 'macos/compile_icon.py'
+      - '.github/workflows/check-macos-icon.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  icon:
+    name: Compile the app icon
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Use Xcode 26
+        run: |
+          xcode="$(ls -d /Applications/Xcode_26*.app | grep -iv beta | sort -V | tail -n 1)"
+          if [ -z "$xcode" ]; then
+            ls -d /Applications/Xcode*
+            echo "::error::This runner has no Xcode 26"
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
+          echo "Using $xcode"
+
+      - name: Compile
+        run: python3 macos/compile_icon.py --output build/Assets.car
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Assets.car
+          path: build/Assets.car

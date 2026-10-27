@@ -26,12 +26,6 @@ python3 "$_main_repo/utils/domain_substitution.py" apply -r "$_main_repo/domain_
 
 # Cerium: rename the browser and swap in its logos and icons
 python3 "$_root_dir/../utils/rebrand.py" "$_src_dir"
-# The Dock icon comes from the compiled asset catalog, which only Xcode's
-# actool can build; recompile it from the Cerium icon sources.
-if ! (cd "$_src_dir" && python3 tools/mac/icons/compile_car.py chrome/app/theme/chromium/mac/Assets.xcassets); then
-  echo "::warning::Could not recompile Assets.car; the Dock icon may still be Chromium's"
-fi
-
 mkdir -p "$_src_dir/third_party/llvm-build/Release+Asserts"
 mkdir -p "$_src_dir/third_party/rust-toolchain/bin"
 

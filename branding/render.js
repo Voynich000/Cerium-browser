@@ -67,10 +67,11 @@ const WORDMARKS = [
   ['components/resources/default_200_percent/chromium/product_logo_white.png', 342, 64, TEXT_WHITE],
 ];
 
-// macOS app icons for macOS 12-15 (macOS 26 uses the layered AppIcon.icon):
+// macOS app icons for macOS 13-15 (macOS 26 uses the layered AppIcon.icon):
 // the logo on a white rounded square laid out on Apple's 1024 px icon grid.
+// They go to branding/macos/ (see macos/compile_icon.py), and
 // branding/make_macos_icons.py builds app.icns from them.
-const MAC_APPICONSET = 'chrome/app/theme/chromium/mac/Assets.xcassets/AppIcon.appiconset';
+const MAC_APPICONSET = 'macos/Assets.xcassets/AppIcon.appiconset';
 const MAC_ICONS = [16, 32, 64, 128, 256, 512, 1024];
 
 // Standalone files for packaging and the README.
@@ -130,7 +131,7 @@ const img = (svg, size) =>
         </div>
       </div>`;
     await render(page, html, size, size,
-                 path.join(overlay, MAC_APPICONSET, `appicon_${size}.png`));
+                 path.join(ROOT, MAC_APPICONSET, `appicon_${size}.png`));
   }
 
   // Vector logos used by internal pages.

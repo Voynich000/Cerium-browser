@@ -185,13 +185,20 @@ The logo is Chromium's own logo in Cerium's colours:
 
 `branding/cerium/logo.svg` and `logo-animation.svg` are Chromium's `product_logo.svg` and
 `product_logo_animation.svg` with those colours swapped. `branding/render.js` renders them into
-`branding/overlay/`, which mirrors 29 logo files in the Chromium source tree:
+`branding/overlay/`, which mirrors 30 logo files in the Chromium source tree:
 
-- app icons from 16 to 256 px, at 1× and 2×;
+- app icons from 16 to 256 px, at 1× and 2×, and the macOS `app.icns`;
 - the "cerium" wordmarks, in dark and white, using the Inter Display font;
 - the favicon and the SVG logos.
 
 The monochrome tray icon stays Chromium's, since it is already grey.
+
+On macOS the Dock and Finder take the icon from a compiled asset catalog, `Assets.car`.
+`branding/macos/` holds its sources in Cerium's colours: Chromium's `AppIcon.icon` (the layered
+macOS 26 icon) and `Assets.xcassets` (bitmaps for older macOS), made by
+`branding/make_macos_icons.py`. Only Xcode's `actool` can compile them, so
+`macos/compile_icon.py` does that on the Mac that makes the disk image, and
+`check-macos-icon.yml` compiles them whenever they change.
 
 `utils/rebrand.py` copies the overlay in at build time and stops the build if a Chromium update
 moved or resized any of those files. The rendered PNGs are committed, so building needs no
@@ -242,9 +249,9 @@ pip3 install httplib2 cryptography --break-system-packages
 macos/build.sh arm64           # clones Chromium, patches, builds, packages build/cerium-*.dmg
 ```
 
-The build renames the app (`Cerium.app`) and recompiles the Dock icon's asset catalog with Xcode's
-`actool`. Then `macos/package_dmg.sh` copies the app, adds the bundled extensions, signs it ad
-hoc (`macos/sign_app.sh`) and makes the disk image.
+The build renames the app (`Cerium.app`). Then `macos/package_dmg.sh` copies the app, puts in
+the Dock icon (`macos/compile_icon.py`) and the bundled extensions, signs it ad hoc
+(`macos/sign_app.sh`) and makes the disk image.
 
 ## GitHub Actions
 
@@ -254,6 +261,7 @@ hoc (`macos/sign_app.sh`) and makes the disk image.
 | `build-macos.yml` | macOS Apple Silicon on the free `macos-15` (M1) runners; ends with `Cerium.app` as a build artifact |
 | `release-macos.yml` | **Publish Cerium for macOS**: runs after each finished macOS build; adds the extensions, signs the app, makes the `.dmg` and publishes the GitHub release |
 | `check.yml` | Checks the Linux and macOS patch series on every push and pull request |
+| `check-macos-icon.yml` | Compiles the macOS app icon with Xcode when its sources change |
 
 The two build workflows split the build into a chain of jobs, each under GitHub's 6-hour job
 limit, and pass the build tree between them. A Linux build takes roughly a day; a macOS build
@@ -324,9 +332,9 @@ staples and checks the app the way Gatekeeper does.
   nothing.
 - **Not done yet: compiling.** A Chromium build needs about 100 GB and hours of CPU time, so the
   C++ and TypeScript changes have not been compiled. They were written against the exact
-  Chromium 156 sources, but the first CI build is the real test. The macOS workflows and the
-  `actool` step have not run on a Mac yet. The signing and notarization code is
-  ungoogled-chromium-macos's, which its own releases use.
+  Chromium 156 sources, but the first CI build is the real test. The macOS build and publish
+  workflows have not completed on a Mac yet. The signing code is ungoogled-chromium-macos's,
+  which its own releases use.
 
 ## Platforms
 
@@ -353,6 +361,7 @@ branding/cerium/               recoloured logo SVGs and large PNGs
 branding/overlay/              rendered logos, mirroring their paths in the Chromium tree
 branding/render.js             renders the overlay from the SVGs
 scripts/check-patches.sh       applies all patches without building
+branding/macos/                macOS app icon sources (compiled by macos/compile_icon.py)
 branding/make_macos_icons.py   recolours the macOS icon layers and builds app.icns
 scripts/, docker/, package/    Linux build and packaging (from portablelinux)
 macos/                         macOS build and packaging (from ungoogled-chromium-macos)
