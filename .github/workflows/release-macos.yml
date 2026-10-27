@@ -1,0 +1,216 @@
+name: Publish Cerium for macOS
+
+# Turns a finished macOS build (the cerium-<version>-arm64-macos-app artifact
+# of build-macos.yml) into the disk image people download, and adds it to the
+# GitHub release for that version, creating the release if there is none.
+#
+# - build-macos.yml runs it at the end of a build for a version tag.
+# - Run it from the Actions tab to publish the latest finished build (or the
+#   build run given as run_id) without building again, for example after
+#   adding the Apple Developer ID secrets. Publishing again replaces the disk
+#   image in the release.
+#
+# With the Apple Developer ID secrets (see "Releases that open with a
+# double-click" in the README) the app is signed and notarized by Apple, so it
+# opens like any other downloaded app. Without them it is signed ad hoc and the
+# release notes explain how to open it anyway.
+
+on:
+  workflow_call:
+    inputs:
+      run_id:
+        required: true
+        type: string
+      tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Run ID of the "Build Cerium for macOS" run to publish (empty: the latest finished build)'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  publish:
+    name: Sign, package and publish the disk image
+    runs-on: macos-15
+    timeout-minutes: 120
+    concurrency:
+      group: publish-macos
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Find the build
+        id: find
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          if [ -n "$RUN_ID" ]; then
+            query="repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100"
+          else
+            query="repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100"
+          fi
+          artifact="$(gh api "$query" --jq '[.artifacts[]
+              | select((.expired | not) and (.name | test("^cerium-.+-arm64-macos-app$")))]
+              | sort_by(.created_at) | last')"
+          if [ -z "$artifact" ] || [ "$artifact" = null ]; then
+            echo "::error::No finished macOS build found${RUN_ID:+ in run $RUN_ID}. Run \"Build Cerium for macOS\" first."
+            exit 1
+          fi
+          name="$(jq -r .name <<< "$artifact")"
+          version="${name#cerium-}"
+          version="${version%-arm64-macos-app}"
+          {
+            echo "name=$name"
+            echo "version=$version"
+            echo "file_name=cerium-$version-arm64-macos.dmg"
+            echo "run_id=$(jq -r .workflow_run.id <<< "$artifact")"
+            echo "sha=$(jq -r .workflow_run.head_sha <<< "$artifact")"
+          } | tee -a "$GITHUB_OUTPUT"
+
+      - name: Download the app
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.find.outputs.name }}
+          run-id: ${{ steps.find.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: app
+
+      - name: Install Python packages
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet cryptography
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+
+      - name: Set up Developer ID signing
+        id: signing
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_CERTIFICATE" ]; then
+            echo "::warning::MACOS_CERTIFICATE is not set, so the app is signed ad hoc and not notarized: macOS blocks it on first launch until the user allows it in System Settings."
+            echo "notarized=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/cerium-signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          # Apple's Developer ID intermediate certificate, which codesign needs
+          # to build the certificate chain.
+          curl -fsSL https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer \
+            -o "$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$keychain" || true
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "$keychain_password" "$keychain" > /dev/null
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$keychain" \
+            | awk '/"Developer ID Application: / { print $2; exit }')"
+          if [ -z "$identity" ]; then
+            security find-identity -v -p codesigning "$keychain"
+            echo "::error::MACOS_CERTIFICATE holds no \"Developer ID Application\" certificate with its private key."
+            exit 1
+          fi
+          {
+            echo "identity=$identity"
+            echo "keychain=$keychain"
+            echo "notarized=true"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Sign and package
+        env:
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+          MACOS_SIGNING_IDENTITY: ${{ steps.signing.outputs.identity }}
+          MACOS_NOTARIZATION_APPLE_ID: ${{ secrets.MACOS_NOTARIZATION_APPLE_ID }}
+          MACOS_NOTARIZATION_TEAM_ID: ${{ secrets.MACOS_NOTARIZATION_TEAM_ID }}
+          MACOS_NOTARIZATION_PASSWORD: ${{ secrets.MACOS_NOTARIZATION_PASSWORD }}
+          FILE_NAME: ${{ steps.find.outputs.file_name }}
+        run: |
+          # Keys for the bundled extensions; without them the release gets new
+          # extension IDs and users of an earlier release lose their settings.
+          mkdir -p keys && chmod 700 keys
+          if [ -n "$CERIUM_UBLOCK_ORIGIN_KEY" ]; then printf '%s\n' "$CERIUM_UBLOCK_ORIGIN_KEY" > keys/ublock_origin.pem; fi
+          if [ -n "$CERIUM_DARK_READER_KEY" ]; then printf '%s\n' "$CERIUM_DARK_READER_KEY" > keys/dark_reader.pem; fi
+          if [ ! -f keys/ublock_origin.pem ] || [ ! -f keys/dark_reader.pem ]; then
+            echo "::warning::Extension signing key secrets are not set; this release gets new extension IDs."
+          fi
+
+          archive="$(ls app/*.app.tar.gz)"
+          mkdir -p "$RUNNER_TEMP/build" release
+          tar -C "$RUNNER_TEMP/build" -xzf "$archive"
+          macos/package_dmg.sh "$RUNNER_TEMP/build/$(basename "$archive" .tar.gz)" "release/$FILE_NAME"
+          rm -rf keys
+          (cd release && shasum -a 256 "$FILE_NAME" | tee "$FILE_NAME.sha256")
+
+      - name: Publish
+        env:
+          TAG: ${{ inputs.tag || steps.find.outputs.version }}
+          SHA: ${{ steps.find.outputs.sha }}
+          NOTARIZED: ${{ steps.signing.outputs.notarized }}
+          FILE_NAME: ${{ steps.find.outputs.file_name }}
+        run: |
+          notes="$RUNNER_TEMP/macos-notes.md"
+          {
+            echo "<!-- cerium-macos -->"
+            echo "### macOS (Apple Silicon)"
+            echo
+            echo "For Macs with an M-series chip, macOS 13 Ventura or later: download \`$FILE_NAME\`, open it and drag **Cerium** onto **Applications**."
+            if [ "$NOTARIZED" != true ]; then
+              echo
+              echo "This build is not notarized by Apple, so macOS blocks it the first time: open Cerium, then go to **System Settings → Privacy & Security** and click **Open Anyway**. Or run \`xattr -dr com.apple.quarantine /Applications/Cerium.app\` in Terminal."
+            fi
+            echo
+            echo "SHA-256: \`$(cut -d ' ' -f 1 "release/$FILE_NAME.sha256")\`"
+            echo "<!-- /cerium-macos -->"
+          } > "$notes"
+
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "release/$FILE_NAME" "release/$FILE_NAME.sha256" --clobber
+            # Replace this workflow's section of the notes (from an earlier
+            # publish) and keep the rest, such as the Linux notes.
+            gh release view "$TAG" --json body --jq .body > "$RUNNER_TEMP/body.md"
+            python3 - "$RUNNER_TEMP/body.md" "$notes" <<'EOF'
+          import re, sys
+          body = open(sys.argv[1]).read().rstrip()
+          section = open(sys.argv[2]).read().strip()
+          pattern = re.compile(r'<!-- cerium-macos -->.*?<!-- /cerium-macos -->', re.DOTALL)
+          if pattern.search(body):
+              body = pattern.sub(lambda _: section, body)
+          else:
+              body = (body + '\n\n' + section).strip()
+          open(sys.argv[1], 'w').write(body + '\n')
+          EOF
+            gh release edit "$TAG" --notes-file "$RUNNER_TEMP/body.md"
+          else
+            gh release create "$TAG" "release/$FILE_NAME" "release/$FILE_NAME.sha256" \
+              --target "$SHA" --title "Cerium $TAG" --notes-file "$notes"
+          fi
+          echo "Published $FILE_NAME to $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
+
+      - name: Remove the signing keychain
+        if: always() && steps.signing.outputs.keychain != ''
+        env:
+          KEYCHAIN: ${{ steps.signing.outputs.keychain }}
+        run: security delete-keychain "$KEYCHAIN" || true

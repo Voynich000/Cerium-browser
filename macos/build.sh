@@ -114,8 +114,8 @@ ln -s "$_esbuild_module" third_party/devtools-frontend/src/node_modules/esbuild
 
 ninja -C out/Default chrome chromedriver
 
-# Cerium: pack uBlock Origin and Dark Reader (keys in ../keys, created if missing)
-python3 "$_root_dir/../utils/bundle_extensions.py" --output-dir "$_src_dir/out/Default" \
-  --cache-dir "$_download_cache" --keys-dir "$_root_dir/../keys"
-
-CHROMIUM_SRC_DIR="$_src_dir" "$_root_dir/sign_and_package_app.sh"
+# Cerium: add uBlock Origin and Dark Reader (keys in ../keys, created if
+# missing), sign the app and package it
+_product="$(sed -n 's/^PRODUCT_FULLNAME=//p' chrome/app/theme/chromium/BRANDING)"
+"$_root_dir/package_dmg.sh" "$_src_dir/out/Default/$_product.app" \
+  "$_root_dir/build/cerium-$(cat "$_main_repo/chromium_version.txt")-$(cat "$_main_repo/revision.txt")-$_arch-macos.dmg"

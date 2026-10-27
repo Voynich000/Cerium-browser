@@ -1,8 +1,11 @@
 name: Build Cerium for macOS
 
-# Apple Silicon (arm64) build, published as a .dmg. Runs on GitHub's free
-# Apple Silicon runners; the build is split into resumable jobs (see
-# build-macos-steps.yml) and can take a day or more.
+# Apple Silicon (arm64) build. Runs on GitHub's free Apple Silicon runners;
+# the build is split into resumable jobs (see build-macos-steps.yml) and can
+# take a day or more. It ends with the app as a build artifact; for a version
+# tag, release-macos.yml then signs it, packages the .dmg and publishes it.
+# Started by hand, it only builds: publish the result with "Publish Cerium for
+# macOS" (release-macos.yml).
 on:
   push:
     tags:
@@ -16,52 +19,23 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   build:
     name: Build Cerium for macOS (Apple Silicon)
     uses: ./.github/workflows/build-macos-steps.yml
-    # CERIUM_UBLOCK_ORIGIN_KEY and CERIUM_DARK_READER_KEY sign the bundled extensions
-    secrets: inherit
     with:
       arch: arm64
       os: ${{ inputs.runner || 'macos-15' }}
 
   release:
-    name: Add the disk image to the release
+    name: Publish the disk image
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - name: Get file name
-        id: version
-        shell: bash
-        run: |
-          version="$(cat ungoogled-chromium/chromium_version.txt)-$(cat ungoogled-chromium/revision.txt)"
-          echo "file_name=cerium-${version}-arm64-macos.dmg" >> "$GITHUB_OUTPUT"
-
-      - name: Download disk image
-        uses: actions/download-artifact@v8
-        with:
-          name: ${{ steps.version.outputs.file_name }}
-          path: release
-
-      - name: Add to release
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1, pinned commit hash
-        with:
-          fail_on_unmatched_files: true
-          append_body: true
-          body: |
-
-            ### macOS (Apple Silicon)
-
-            `cerium-*-arm64-macos.dmg` is for Macs with an M-series chip. Cerium is not
-            notarized by Apple, so the first time you open it macOS refuses: open
-            **System Settings → Privacy & Security** and click **Open Anyway**, or run
-            `xattr -dr com.apple.quarantine /Applications/Cerium.app` in Terminal.
-          files: |
-            release/release_asset/*.dmg
+    uses: ./.github/workflows/release-macos.yml
+    # The Apple Developer ID and extension key secrets (see the README)
+    secrets: inherit
+    with:
+      run_id: ${{ github.run_id }}
+      tag: ${{ github.ref_name }}

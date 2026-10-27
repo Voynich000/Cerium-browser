@@ -1,5 +1,5 @@
 #!/bin/bash
-# Simple script for packing Ungoogled-Chromium macOS build artifacts on GitHub Actions
+# Simple script for packing Cerium macOS build artifacts on GitHub Actions
 
 set -euo pipefail
 
@@ -7,58 +7,23 @@ _target_cpu="${1:-x86_64}"
 
 # The macOS harness lives in macos/ of the Cerium repository.
 _root_dir="$(dirname "$(greadlink -f "$0")")"
-_repo_dir="$(greadlink -f "$_root_dir/..")"
 _src_dir="$_root_dir/build/src"
 
-# If build finished successfully
+# If build finished successfully, keep the app for the release workflow
+# (.github/workflows/release-macos.yml), which adds the bundled extensions,
+# signs it and makes the disk image.
 if [[ -f "$_root_dir/build_finished_$_target_cpu.log" ]] ; then
-  # For packaging
   _chromium_version="$(cat "$_root_dir/ungoogled-chromium/chromium_version.txt")"
   _ungoogled_revision="$(cat "$_root_dir/ungoogled-chromium/revision.txt")"
+  _product="$(sed -n 's/^PRODUCT_FULLNAME=//p' "$_src_dir/chrome/app/theme/chromium/BRANDING")"
+  _artifact_name="cerium-${_chromium_version}-${_ungoogled_revision}-${_target_cpu}-macos-app"
 
-  _file_name="cerium-${_chromium_version}-${_ungoogled_revision}-${_target_cpu}-macos.dmg"
-  _hash_name="${_file_name}.hashes.md"
-
-  # Sign the bundled extensions with the keys from the repository secrets
-  # (new keys, and so new extension IDs, if they are not set).
-  mkdir -p "$_repo_dir/keys"
-  chmod 700 "$_repo_dir/keys"
-  if [[ -n "${CERIUM_UBLOCK_ORIGIN_KEY:-}" ]]; then
-    printf '%s\n' "$CERIUM_UBLOCK_ORIGIN_KEY" > "$_repo_dir/keys/ublock_origin.pem"
-  fi
-  if [[ -n "${CERIUM_DARK_READER_KEY:-}" ]]; then
-    printf '%s\n' "$CERIUM_DARK_READER_KEY" > "$_repo_dir/keys/dark_reader.pem"
-  fi
-  if [[ ! -f "$_repo_dir/keys/ublock_origin.pem" || ! -f "$_repo_dir/keys/dark_reader.pem" ]]; then
-    echo "::warning::Extension signing key secrets are not set; this build gets new extension IDs."
-  fi
-  python3 "$_repo_dir/utils/bundle_extensions.py" \
-    --output-dir "$_src_dir/out/Default" \
-    --cache-dir "$_root_dir/build/download_cache" \
-    --keys-dir "$_repo_dir/keys"
-
-  cd "$_src_dir"
-
-  # Cerium has no Apple Developer ID: sign ad hoc and skip notarization.
-  MACOS_AD_HOC_SIGNING=1 "$_root_dir/sign_and_package_app.sh" "$_root_dir/$_file_name"
-
-  cd "$_root_dir"
-  echo -e "md5: \nsha1: \nsha256: " | tee ./hash_types.txt
-  { md5sum "$_file_name" ; sha1sum "$_file_name" ; sha256sum "$_file_name" ; } | tee ./sums.txt
-
-  _hash_md=$(paste ./hash_types.txt ./sums.txt | awk '{print $1 " " $2}')
-
-  printf 'file_name=%s\n' "$_file_name" >> "$GITHUB_OUTPUT"
-
-  printf '[Hashes](https://en.wikipedia.org/wiki/Cryptographic_hash_function) for the disk image `%s`: \n' "$_file_name" | tee -a ./${_hash_name}
-  printf '\n```\n%s\n```\n' "$_hash_md" | tee -a ./${_hash_name}
-
-  # Use separate folder for build product, so that it can be used as individual asset in case the release action fails
-  mkdir -p release_asset
-  mv -vn ./*.dmg release_asset/ || true
-
-  ls -kahl release_asset/
-  du -hs release_asset/
+  mkdir -p app_artifact
+  # A tarball keeps the framework's symlinks and file modes, which artifact
+  # uploads would lose.
+  tar -C "$_src_dir/out/Default" -czf "app_artifact/$_product.app.tar.gz" "$_product.app"
+  shasum -a 256 "app_artifact/$_product.app.tar.gz"
+  printf 'artifact_name=%s\n' "$_artifact_name" >> "$GITHUB_OUTPUT"
 fi
 
 gsync --file-system "$_src_dir"

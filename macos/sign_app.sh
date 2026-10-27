@@ -1,18 +1,32 @@
 #!/usr/bin/env bash
+# Signs Cerium.app (and, with a Developer ID, notarizes it with Apple and
+# staples the ticket):
+#
+#   sign_app.sh path/to/Cerium.app
+#
+# Without MACOS_SIGNING_IDENTITY the app is signed ad hoc: it runs, but macOS
+# blocks it on first launch until the user allows it in System Settings.
+# With these set it is signed with a Developer ID and notarized, so it opens
+# like any other downloaded app:
+#
+#   MACOS_SIGNING_IDENTITY        "Developer ID Application: ..." certificate
+#                                 (name or SHA-1) in the keychain search list
+#   MACOS_NOTARIZATION_APPLE_ID   Apple ID of the developer account
+#   MACOS_NOTARIZATION_TEAM_ID    its team ID
+#   MACOS_NOTARIZATION_PASSWORD   an app-specific password for that Apple ID
+#
+# Based on ungoogled-chromium-macos's sign_and_package_app.sh.
 
 set -euo pipefail
 
-_root_dir="$(dirname "$(greadlink -f "$0")")"
-_src_dir="${CHROMIUM_SRC_DIR:-$_root_dir/build/src}"
-_out_dir="$_src_dir/out/Default"
-# The app, framework and helpers are named after PRODUCT_FULLNAME, which
-# utils/rebrand.py sets to Cerium.
-_product="$(sed -n 's/^PRODUCT_FULLNAME=//p' "$_src_dir/chrome/app/theme/chromium/BRANDING")"
-_app="$_out_dir/$_product.app"
+_root_dir="$(cd "$(dirname "$0")" && pwd)"
+_app="${1:?usage: sign_app.sh path/to/Cerium.app}"
+_app="$(cd "$(dirname "$_app")" && pwd)/$(basename "$_app")"
+_product="$(basename "$_app" .app)"
 _framework="$_app/Contents/Frameworks/$_product Framework.framework"
 _helpers="$_framework/Helpers"
 _libraries="$_framework/Libraries"
-_pkg_dmg="$_src_dir/chrome/installer/mac/pkg-dmg"
+_identity="${MACOS_SIGNING_IDENTITY:-}"
 
 # Sign every bundle with its own bundle identifier. If the code signing
 # identifier differs from CFBundleIdentifier, macOS privacy permissions such as
@@ -20,22 +34,11 @@ _pkg_dmg="$_src_dir/chrome/installer/mac/pkg-dmg"
 # See https://github.com/ungoogled-software/ungoogled-chromium-macos/issues/361
 _bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$_app/Contents/Info.plist")"
 
-# Cerium has no Apple Developer ID, so it is signed ad hoc unless
-# MACOS_AD_HOC_SIGNING=0 and MACOS_CERTIFICATE_NAME (plus the notarization
-# credentials) are provided.
-_ad_hoc="${MACOS_AD_HOC_SIGNING:-1}"
-_target_dmg="${1:-}"
-if [[ -z "$_target_dmg" ]]; then
-  _chromium_version="$(cat "$_root_dir/ungoogled-chromium/chromium_version.txt")"
-  _ungoogled_revision="$(cat "$_root_dir/ungoogled-chromium/revision.txt")"
-  _target_dmg="$_root_dir/build/cerium-${_chromium_version}-${_ungoogled_revision}-$(uname -m)-macos.dmg"
-fi
-
 sign() {
-  if (( _ad_hoc )); then
+  if [[ -z "$_identity" ]]; then
     codesign --sign - --force "$@"
   else
-    codesign --sign "$MACOS_CERTIFICATE_NAME" --force --timestamp "$@"
+    codesign --sign "$_identity" --force --timestamp "$@"
   fi
 }
 
@@ -46,17 +49,6 @@ error() {
 warning() {
   printf '::warning::%s\n' "$*" >&2
 }
-
-# Ship the bundled extensions (uBlock Origin, Dark Reader) and the default
-# preferences that pin them inside the framework, where the browser looks for
-# them (base::DIR_ASSETS). This has to happen before anything is signed.
-if [[ ! -d "$_out_dir/bundled_extensions" || ! -f "$_out_dir/initial_preferences" ]]; then
-  error "Run utils/bundle_extensions.py --output-dir $_out_dir first"
-  exit 1
-fi
-rm -rf "$_framework/Resources/bundled_extensions"
-cp -R "$_out_dir/bundled_extensions" "$_framework/Resources/"
-cp "$_out_dir/initial_preferences" "$_framework/Resources/"
 
 # Fix issue where macOS requests permission for incoming network connections
 # See https://github.com/ungoogled-software/ungoogled-chromium-macos/issues/17
@@ -86,7 +78,7 @@ for _dylib in "$_libraries"/*.dylib; do
 done
 
 sign --identifier "$_bundle_id.framework" "$_framework"
-if (( _ad_hoc )); then
+if [[ -z "$_identity" ]]; then
   sign --identifier "$_bundle_id" --options restrict,library,runtime,kill --entitlements "$_root_dir/entitlements/app-entitlements.plist" "$_app"
 else
   sign --identifier "$_bundle_id" --options restrict,library,runtime,kill --entitlements "$_root_dir/entitlements/app-entitlements.plist" --requirements "=designated => identifier \"$_bundle_id\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */" "$_app"
@@ -99,7 +91,7 @@ verify_dylib() {
 
   codesign --verify --strict --verbose=4 "$dylib"
 
-  if (( _ad_hoc )); then
+  if [[ -z "$_identity" ]]; then
     return
   fi
 
@@ -145,20 +137,20 @@ done
 verify_identifier "$_framework" "$_framework/Resources/Info.plist"
 
 notarize_app() {
-  local archive="$TMPDIR/notarize.zip"
-  local result="$TMPDIR/notary-result.json"
-  local log="$TMPDIR/notary-log.json"
-  local status submission_id
+  local work result log status submission_id
   local submit_exit=0
   local credentials=(
-    --apple-id "$PROD_MACOS_NOTARIZATION_APPLE_ID"
-    --team-id "$PROD_MACOS_NOTARIZATION_TEAM_ID"
-    --password "$PROD_MACOS_NOTARIZATION_PWD"
+    --apple-id "${MACOS_NOTARIZATION_APPLE_ID:?MACOS_NOTARIZATION_APPLE_ID is not set}"
+    --team-id "${MACOS_NOTARIZATION_TEAM_ID:?MACOS_NOTARIZATION_TEAM_ID is not set}"
+    --password "${MACOS_NOTARIZATION_PASSWORD:?MACOS_NOTARIZATION_PASSWORD is not set}"
   )
+  work="$(mktemp -d)"
+  result="$work/notary-result.json"
+  log="$work/notary-log.json"
 
-  ditto -c -k --keepParent "$_app" "$archive"
+  ditto -c -k --keepParent "$_app" "$work/notarize.zip"
 
-  xcrun notarytool submit --wait --output-format json "${credentials[@]}" "$archive" \
+  xcrun notarytool submit --wait --output-format json "${credentials[@]}" "$work/notarize.zip" \
     > "$result" || submit_exit=$?
 
   cat "$result"
@@ -196,19 +188,15 @@ notarize_app() {
     return 1
   fi
 
+  rm -rf "$work"
   xcrun stapler staple "$_app"
   xcrun stapler validate "$_app"
+  # The check Gatekeeper makes when a downloaded app is opened.
+  spctl --assess --type execute --verbose=4 "$_app"
 }
 
-if (( _ad_hoc )); then
-  printf 'Ad-hoc signing enabled; skipping notarization and stapling.\n'
+if [[ -z "$_identity" ]]; then
+  printf 'Signed ad hoc; skipping notarization.\n'
 else
   notarize_app
 fi
-
-# Package the app
-"$_pkg_dmg" \
-  --sourcefile --source "$_app" \
-  --target "$_target_dmg" \
-  --volname "$_product" --symlink /Applications:/Applications \
-  --format UDBZ --verbosity 2
