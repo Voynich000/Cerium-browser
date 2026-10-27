@@ -84,6 +84,43 @@ jobs:
       - name: Package
         run: macos/package_dmg.sh "$RUNNER_TEMP/test/Chromium.app" "$RUNNER_TEMP/test.dmg"
 
+      - name: Compare launch behaviour of signing variants
+        continue-on-error: true
+        run: |
+          set +e
+          mount="$(hdiutil attach -nobrowse -readonly "$RUNNER_TEMP/test.dmg" | awk -F '\t' '/\/Volumes\// { print $NF; exit }')"
+          mkdir -p "$RUNNER_TEMP/v"
+          ditto "$mount/Chromium.app" "$RUNNER_TEMP/v/ours/Chromium.app"
+          hdiutil detach "$mount"
+          ditto "$RUNNER_TEMP/test/Chromium.app" "$RUNNER_TEMP/v/plain/Chromium.app"
+          xattr -cr "$RUNNER_TEMP/v/plain/Chromium.app"
+          codesign --force --deep --sign - "$RUNNER_TEMP/v/plain/Chromium.app" 2>&1 | tail -n 2
+          try() {  # try <name> <app> [flags...]
+            local name="$1" app="$2"; shift 2
+            local result=""
+            for attempt in 1 2; do
+              local dir="$RUNNER_TEMP/v/run-$name-$attempt"
+              mkdir -p "$dir"
+              perl -e 'alarm 90; exec @ARGV' "$app/Contents/MacOS/Chromium" --headless=new --no-first-run \
+                --user-data-dir="$dir/profile" "$@" --dump-dom 'data:text/html,<title>ok</title>' \
+                > "$dir/dom.html" 2> "$dir/err.log"
+              local status=$?
+              local page=$(grep -c '<title>ok</title>' "$dir/dom.html")
+              local net=$(grep -c 'Network service crashed' "$dir/err.log")
+              local wd=$(grep -c 'Teardown watchdog' "$dir/err.log")
+              result="$result [exit $status, page $page, netcrash $net, watchdog $wd]"
+            done
+            echo "$name:$result"
+          }
+          {
+            try control "$RUNNER_TEMP/test/Chromium.app"
+            try ours "$RUNNER_TEMP/v/ours/Chromium.app"
+            try ours-novalidate "$RUNNER_TEMP/v/ours/Chromium.app" --disable-features=ValidateNetworkServiceProcessIdentity
+            try plain-adhoc "$RUNNER_TEMP/v/plain/Chromium.app"
+          } > "$RUNNER_TEMP/variants.txt" 2>&1
+          msg="$(cat "$RUNNER_TEMP/variants.txt")"; msg="${msg//'%'/'%25'}"; msg="${msg//$'\n'/'%0A'}"
+          echo "::notice::Variants:%0A$msg"
+
       - name: Check the disk image
         run: |
           trap '_status=$?; echo "::error::line $LINENO: $BASH_COMMAND failed (exit status $_status)"' ERR
