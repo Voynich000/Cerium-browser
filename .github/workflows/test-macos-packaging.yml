@@ -101,10 +101,24 @@ jobs:
           fi
           # The signed app has to start (hardened runtime, entitlements,
           # library validation). It prints the page and exits.
+          status=0
           perl -e 'alarm 120; exec @ARGV' "$app/Contents/MacOS/Chromium" --headless=new \
             --no-first-run --user-data-dir="$RUNNER_TEMP/profile" --dump-dom \
-            'data:text/html,<title>ok</title>' > "$RUNNER_TEMP/dom.html"
-          grep -q '<title>ok</title>' "$RUNNER_TEMP/dom.html"
+            'data:text/html,<title>ok</title>' > "$RUNNER_TEMP/dom.html" 2> "$RUNNER_TEMP/app.log" || status=$?
+          if [ "$status" != 0 ] || ! grep -q '<title>ok</title>' "$RUNNER_TEMP/dom.html"; then
+            {
+              echo "The app exited with status $status. Its output:"
+              tail -c 3000 "$RUNNER_TEMP/app.log"
+              report="$(ls -t ~/Library/Logs/DiagnosticReports/*.ips 2>/dev/null | head -n 1)"
+              if [ -n "$report" ]; then
+                echo "Crash report $report:"
+                grep -E '"(exception|termination|asi|crashed|faultingThread|namespace|indicator|reasons|details)"' "$report" | head -n 30
+              fi
+            } > "$RUNNER_TEMP/failure.txt" 2>&1
+            msg="$(cat "$RUNNER_TEMP/failure.txt")"; msg="${msg//'%'/'%25'}"; msg="${msg//$'\n'/'%0A'}"
+            echo "::error::$msg"
+            exit 1
+          fi
           size="$(du -h "$RUNNER_TEMP/test.dmg" | cut -f 1)"
           echo "::notice::Packaged $size disk image; extensions: $extensions; the signed app starts"
           hdiutil detach "$mount"
