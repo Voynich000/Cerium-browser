@@ -60,9 +60,11 @@ warning() {
   printf '::warning::%s\n' "$*" >&2
 }
 
-# Fix issue where macOS requests permission for incoming network connections
-# See https://github.com/ungoogled-software/ungoogled-chromium-macos/issues/17
-xattr -cs "$_app"
+# Clear extended attributes from every file: codesign refuses files with
+# some of them (e.g. com.apple.FinderInfo), and a quarantined app makes macOS
+# ask for permission for incoming network connections
+# (https://github.com/ungoogled-software/ungoogled-chromium-macos/issues/17).
+xattr -cr "$_app"
 
 # Sign the binary
 sign --identifier chrome_crashpad_handler --options=restrict,library,runtime,kill "$_helpers/chrome_crashpad_handler"
