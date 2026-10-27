@@ -113,6 +113,8 @@ jobs:
             --no-first-run --user-data-dir="$RUNNER_TEMP/profile" --dump-dom \
             'data:text/html,<title>ok</title>' > "$RUNNER_TEMP/dom.html" 2> "$RUNNER_TEMP/app.log" || status=$?
           if [ "$status" != 0 ] || ! grep -q '<title>ok</title>' "$RUNNER_TEMP/dom.html"; then
+            set +e +o pipefail
+            trap - ERR
             {
               echo "The app exited with status $status. Its output:"
               tail -c 2500 "$RUNNER_TEMP/app.log"
