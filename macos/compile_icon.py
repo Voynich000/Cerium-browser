@@ -67,6 +67,8 @@ def _messages(output, key):
 
 def compile_icon(output_path, minimum_deployment_target):
     version = _actool_version()
+    xcode = subprocess.run(['xcodebuild', '-version'], capture_output=True, text=True, check=False)
+    print(f'compile_icon.py: actool {".".join(map(str, version))}, {xcode.stdout.strip()}')
     if version < _MIN_ACTOOL_VERSION:
         raise SystemExit(f'actool {".".join(map(str, version))} is too old; '
                          'select Xcode 26 or later (xcode-select or DEVELOPER_DIR)')
@@ -107,8 +109,9 @@ def compile_icon(output_path, minimum_deployment_target):
         car = out_dir / 'Assets.car'
         if process.returncode != 0 or errors or not car.is_file():
             details = '\n'.join(errors) or process.stdout.decode(errors='replace')
+            # A crash report starts with the reason, followed by a long backtrace.
             _report('error', f'actool failed (exit status {process.returncode}): {details}\n'
-                    f'{process.stderr.decode(errors="replace")[-2000:]}')
+                    f'{process.stderr.decode(errors="replace")[:3000]}')
             raise SystemExit(1)
 
         # Check that the catalog holds the app icon under the name Info.plist uses.
