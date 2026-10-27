@@ -21,8 +21,13 @@ permissions:
 
 jobs:
   icon:
-    name: Compile the app icon
-    runs-on: macos-15
+    name: Compile the app icon (${{ matrix.runner }}${{ matrix.flags && ', ' || '' }}${{ matrix.flags }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-26]
+        flags: ['', '--no-lightweight-runtime']
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -39,9 +44,9 @@ jobs:
           echo "Using $xcode"
 
       - name: Compile
-        run: python3 macos/compile_icon.py --output build/Assets.car
+        run: python3 macos/compile_icon.py --output build/Assets.car ${{ matrix.flags }}
 
       - uses: actions/upload-artifact@v7
         with:
-          name: Assets.car
+          name: Assets.car-${{ matrix.runner }}${{ matrix.flags }}
           path: build/Assets.car

@@ -65,7 +65,7 @@ def _messages(output, key):
     return messages
 
 
-def compile_icon(output_path, minimum_deployment_target):
+def compile_icon(output_path, minimum_deployment_target, lightweight_runtime=True):
     version = _actool_version()
     xcode = subprocess.run(['xcodebuild', '-version'], capture_output=True, text=True, check=False)
     print(f'compile_icon.py: actool {".".join(map(str, version))}, {xcode.stdout.strip()}')
@@ -83,7 +83,7 @@ def compile_icon(output_path, minimum_deployment_target):
             'xcrun', 'actool',
             '--output-format=xml1', '--notices', '--warnings', '--errors',
             '--platform=macosx', '--target-device=mac',
-            '--lightweight-asset-runtime-mode=enabled',
+            f'--lightweight-asset-runtime-mode={"enabled" if lightweight_runtime else "disabled"}',
             '--enable-icon-stack-fallback-generation=disabled',
             '--include-all-app-icons',
             '--app-icon=AppIcon',
@@ -110,8 +110,10 @@ def compile_icon(output_path, minimum_deployment_target):
         if process.returncode != 0 or errors or not car.is_file():
             details = '\n'.join(errors) or process.stdout.decode(errors='replace')
             # A crash report starts with the reason, followed by a long backtrace.
+            stderr = '\n'.join(line for line in process.stderr.decode(errors='replace').splitlines()
+                               if not line.startswith('dyld['))
             _report('error', f'actool failed (exit status {process.returncode}): {details}\n'
-                    f'{process.stderr.decode(errors="replace")[:3000]}')
+                    f'{stderr[:3000]}')
             raise SystemExit(1)
 
         # Check that the catalog holds the app icon under the name Info.plist uses.
@@ -139,8 +141,10 @@ def main():
     parser.add_argument('--output', type=Path, required=True, help='Assets.car to write')
     parser.add_argument('--minimum-deployment-target', default='13.0',
                         help="Chromium's mac_deployment_target (build/config/mac/mac_sdk.gni)")
+    parser.add_argument('--no-lightweight-runtime', action='store_true',
+                        help="use the system's asset frameworks instead of Xcode's")
     args = parser.parse_args()
-    compile_icon(args.output, args.minimum_deployment_target)
+    compile_icon(args.output, args.minimum_deployment_target, not args.no_lightweight_runtime)
 
 
 if __name__ == '__main__':
