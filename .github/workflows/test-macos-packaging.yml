@@ -73,8 +73,10 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app"
           cat "$resources/initial_preferences"
           extensions="$(cd "$resources/bundled_extensions" && ls *.crx | tr '\n' ' ')"
-          # The icon was replaced by Cerium's.
-          ! cmp -s <(shasum -a 256 < "$app/Contents/Resources/Assets.car") "$RUNNER_TEMP/upstream-icon.sha256"
+          if cmp -s <(shasum -a 256 < "$app/Contents/Resources/Assets.car") "$RUNNER_TEMP/upstream-icon.sha256"; then
+            echo "::error::Assets.car is still upstream's; the Cerium icon was not put in"
+            exit 1
+          fi
           # The signed app has to start (hardened runtime, entitlements,
           # library validation). It prints the page and exits.
           perl -e 'alarm 120; exec @ARGV' "$app/Contents/MacOS/Chromium" --headless=new \
