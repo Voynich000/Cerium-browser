@@ -38,10 +38,17 @@ _identity="${MACOS_SIGNING_IDENTITY:-}"
 _bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$_app/Contents/Info.plist")"
 
 sign() {
+  local output
+  local status=0
   if [[ -z "$_identity" ]]; then
-    codesign --sign - --force "$@"
+    output="$(codesign --sign - --force "$@" 2>&1)" || status=$?
   else
-    codesign --sign "$_identity" --force --timestamp "$@"
+    output="$(codesign --sign "$_identity" --force --timestamp "$@" 2>&1)" || status=$?
+  fi
+  [[ -z "$output" ]] || printf '%s\n' "$output"
+  if (( status != 0 )); then
+    error "codesign failed for ${*: -1}: $output"
+    return "$status"
   fi
 }
 
