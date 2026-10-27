@@ -13,14 +13,18 @@ before it is signed:
   compile_icon.py --output path/to/Assets.car
 
 The actool command is the one of Chromium's tools/mac/icons/compile_car.py,
-which explains each flag. It needs Xcode 26 or later. Unlike Chromium's
-script, warnings don't stop it; they are printed (as GitHub Actions
-annotations in CI).
+which explains each flag. It needs Xcode 26 or later, and macOS 26 for the
+full result: there actool uses its own copy of the asset frameworks
+(--lightweight-asset-runtime-mode), which crashes on earlier macOS. On those
+the system's frameworks are used instead, which leave out the macOS 26
+(Liquid Glass) form of the icon. Unlike Chromium's script, warnings don't
+stop it; they are printed (as GitHub Actions annotations in CI).
 """
 
 import argparse
 import json
 import os
+import platform
 import plistlib
 import shutil
 import subprocess
@@ -65,7 +69,12 @@ def _messages(output, key):
     return messages
 
 
-def compile_icon(output_path, minimum_deployment_target, lightweight_runtime=True):
+def _host_macos_major():
+    release = platform.mac_ver()[0]
+    return int(release.split('.')[0]) if release else 0
+
+
+def compile_icon(output_path, minimum_deployment_target, lightweight_runtime):
     version = _actool_version()
     xcode = subprocess.run(['xcodebuild', '-version'], capture_output=True, text=True, check=False)
     print(f'compile_icon.py: actool {".".join(map(str, version))}, {xcode.stdout.strip()}')
@@ -141,10 +150,12 @@ def main():
     parser.add_argument('--output', type=Path, required=True, help='Assets.car to write')
     parser.add_argument('--minimum-deployment-target', default='13.0',
                         help="Chromium's mac_deployment_target (build/config/mac/mac_sdk.gni)")
-    parser.add_argument('--no-lightweight-runtime', action='store_true',
-                        help="use the system's asset frameworks instead of Xcode's")
     args = parser.parse_args()
-    compile_icon(args.output, args.minimum_deployment_target, not args.no_lightweight_runtime)
+    lightweight_runtime = _host_macos_major() >= 26
+    if not lightweight_runtime:
+        _report('warning', f'macOS {platform.mac_ver()[0]}: compiling without the macOS 26 '
+                'form of the icon; use macOS 26 or later for the full icon')
+    compile_icon(args.output, args.minimum_deployment_target, lightweight_runtime)
 
 
 if __name__ == '__main__':

@@ -198,7 +198,8 @@ On macOS the Dock and Finder take the icon from a compiled asset catalog, `Asset
 macOS 26 icon) and `Assets.xcassets` (bitmaps for older macOS), made by
 `branding/make_macos_icons.py`. Only Xcode's `actool` can compile them, so
 `macos/compile_icon.py` does that on the Mac that makes the disk image, and
-`check-macos-icon.yml` compiles them whenever they change.
+`check-macos-icon.yml` compiles them whenever they change. Both run on macOS 26, which actool
+needs for the macOS 26 form of the icon.
 
 `utils/rebrand.py` copies the overlay in at build time and stops the build if a Chromium update
 moved or resized any of those files. The rendered PNGs are committed, so building needs no

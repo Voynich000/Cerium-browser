@@ -37,7 +37,8 @@ jobs:
   publish:
     name: Sign, package and publish the disk image
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
-    runs-on: macos-15
+    # macOS 26: actool needs it for the macOS 26 form of the app icon.
+    runs-on: macos-26
     timeout-minutes: 120
     concurrency:
       group: publish-macos

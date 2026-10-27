@@ -21,13 +21,9 @@ permissions:
 
 jobs:
   icon:
-    name: Compile the app icon (${{ matrix.runner }}${{ matrix.flags && ', ' || '' }}${{ matrix.flags }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [macos-15, macos-26]
-        flags: ['', '--no-lightweight-runtime']
+    name: Compile the app icon
+    # actool needs macOS 26 for the macOS 26 form of the icon.
+    runs-on: macos-26
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -44,9 +40,9 @@ jobs:
           echo "Using $xcode"
 
       - name: Compile
-        run: python3 macos/compile_icon.py --output build/Assets.car ${{ matrix.flags }}
+        run: python3 macos/compile_icon.py --output build/Assets.car
 
       - uses: actions/upload-artifact@v7
         with:
-          name: Assets.car-${{ matrix.runner }}${{ matrix.flags }}
+          name: Assets.car
           path: build/Assets.car
