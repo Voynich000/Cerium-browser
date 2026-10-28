@@ -30,34 +30,48 @@ on:
 jobs:
   retrieve-resources:
     name: Retrieve resources required for building
-    if: ${{ inputs.resume_run_id == '' }}
-    runs-on: ${{ inputs.os }}
+    # Cerium: when resuming (resume_run_id), every step is skipped but the job
+    # still succeeds. A skipped job would skip all the build jobs after it:
+    # GitHub skips jobs whose dependencies, direct or not, were skipped.
+    # (It then needs no Mac either.)
+    runs-on: ${{ inputs.resume_run_id == '' && inputs.os || 'ubuntu-latest' }}
     steps:
       - name: Clone repository
+        if: ${{ inputs.resume_run_id == '' }}
         uses: actions/checkout@v7
         with:
           submodules: true
       - name: Cleanup Android Related Stuff
+        if: ${{ inputs.resume_run_id == '' }}
         run: sudo rm -rf $ANDROID_HOME
       - name: Copy GitHub specific scripts to git-root folder
+        if: ${{ inputs.resume_run_id == '' }}
         run: cp -va ./ci/. ./
       - name: Prepare Xcode
+        if: ${{ inputs.resume_run_id == '' }}
         run: ./github_prepare_xcode.sh
       - name: Disable Spotlight
+        if: ${{ inputs.resume_run_id == '' }}
         run: sudo mdutil -a -i off
       - name: Setup Python 3.13 (latest for depot_tools to work)
+        if: ${{ inputs.resume_run_id == '' }}
         uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Setup Environment and Toolchain
+        if: ${{ inputs.resume_run_id == '' }}
         run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
       - name: Download and unpack required resources
+        if: ${{ inputs.resume_run_id == '' }}
         run: ./github_fetch_resources.sh ${{ inputs.arch }} | tee -a github_actions_retrieve_resources.log
       - name: List resources
+        if: ${{ inputs.resume_run_id == '' }}
         run: ls -la
       - name: Archive resources
+        if: ${{ inputs.resume_run_id == '' }}
         run: ./github_pack_resources.sh | tee -a github_actions_retrieve_resources.log
       - name: Upload resources
+        if: ${{ inputs.resume_run_id == '' }}
         uses: actions/upload-artifact@v7
         with:
           name: cerium_macos_resources_${{ inputs.arch }}
@@ -67,8 +81,6 @@ jobs:
     name: Start Building Cerium for macOS
     runs-on: ${{ inputs.os }}
     needs: retrieve-resources
-    # Cerium: or continue the build saved by an earlier run (resume_run_id).
-    if: ${{ !cancelled() && (needs.retrieve-resources.result == 'success' || inputs.resume_run_id != '') }}
     outputs:
       status: ${{ steps.build.outputs.status }}
     steps:

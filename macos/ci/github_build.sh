@@ -57,7 +57,8 @@ set +e
 # Cerium: compile the files Cerium's patches change first, so that a mistake
 # in them stops the first build job instead of hours into the build. Once
 # built, later jobs find them up to date.
-_cerium_targets="$(python3 "$_root_dir/cerium_first_targets.py" "$_src_dir")"
+_cerium_targets="$(python3 "$_root_dir/cerium_first_targets.py" "$_src_dir" 2> "$_root_dir/cerium_first_targets.log")"
+cat "$_root_dir/cerium_first_targets.log"
 if [[ -n "$_cerium_targets" ]]; then
   # shellcheck disable=SC2086
   run_ninja $_cerium_targets
@@ -70,7 +71,9 @@ if [[ -n "$_cerium_targets" ]]; then
   fi
   echo "::notice::Cerium's changes compiled: $(wc -w <<< "$_cerium_targets") targets"
 else
-  echo "::warning::Found no targets for Cerium's changes; they are compiled with the rest"
+  _why="$(tail -c 1500 "$_root_dir/cerium_first_targets.log")"
+  _why="${_why//'%'/'%25'}"
+  echo "::warning::Found no targets for Cerium's changes; they are compiled with the rest.%0A${_why//$'\n'/'%0A'}"
 fi
 
 run_ninja chrome chromedriver
