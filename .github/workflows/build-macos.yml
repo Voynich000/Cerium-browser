@@ -15,9 +15,14 @@ on:
         description: macOS runner label (Apple Silicon, with Xcode 26)
         default: macos-15
         type: string
+      resume_run_id:
+        description: Run ID of an earlier build that failed, to continue from its last saved state (empty starts from scratch)
+        default: ''
+        type: string
 
 permissions:
   contents: read
+  actions: read  # to continue an earlier run's build
 
 jobs:
   build:
@@ -26,3 +31,4 @@ jobs:
     with:
       arch: arm64
       os: ${{ inputs.runner || 'macos-15' }}
+      resume_run_id: ${{ inputs.resume_run_id || '' }}

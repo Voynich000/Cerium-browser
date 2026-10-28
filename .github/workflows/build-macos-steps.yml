@@ -20,11 +20,17 @@ on:
       os:
         required: true
         type: string
+      resume_run_id:
+        description: Run whose last saved build to continue instead of starting over
+        required: false
+        type: string
+        default: ''
 
 
 jobs:
   retrieve-resources:
     name: Retrieve resources required for building
+    if: ${{ inputs.resume_run_id == '' }}
     runs-on: ${{ inputs.os }}
     steps:
       - name: Clone repository
@@ -61,6 +67,8 @@ jobs:
     name: Start Building Cerium for macOS
     runs-on: ${{ inputs.os }}
     needs: retrieve-resources
+    # Cerium: or continue the build saved by an earlier run (resume_run_id).
+    if: ${{ !cancelled() && (needs.retrieve-resources.result == 'success' || inputs.resume_run_id != '') }}
     outputs:
       status: ${{ steps.build.outputs.status }}
     steps:
@@ -81,16 +89,39 @@ jobs:
       - name: Setup Environment and Toolchain
         run: ./github_setup_env_toolchain.sh ${{ inputs.arch }} | tee -a github_actions_setup_env_toolchain.log
       - name: Download resources
+        if: ${{ inputs.resume_run_id == '' }}
         uses: actions/download-artifact@v8
         with:
           name: cerium_macos_resources_${{ inputs.arch }}
           path: macos
       - name: Unpack resources
+        if: ${{ inputs.resume_run_id == '' }}
         run: ./github_unpack_resources.sh
       - name: List resources
+        if: ${{ inputs.resume_run_id == '' }}
         run: ls -la
       - name: Prepare for building
+        if: ${{ inputs.resume_run_id == '' }}
         run: ./github_before_build.sh ${{ inputs.arch }} | tee -a github_actions_build_${{ inputs.arch }}.log
+      - name: Get the logs of the build to continue
+        if: ${{ inputs.resume_run_id != '' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: macos
+          run-id: ${{ inputs.resume_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download the build to continue
+        if: ${{ inputs.resume_run_id != '' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: macos
+          run-id: ${{ inputs.resume_run_id }}
+          github-token: ${{ github.token }}
+      - name: Unpack archive of the build to continue
+        if: ${{ inputs.resume_run_id != '' }}
+        run: ./github_unpack_archive.sh
       - name: Build
         id: build
         run: ./github_build.sh ${{ inputs.arch }} 2>&1 | tee -a github_actions_build_${{ inputs.arch }}.log

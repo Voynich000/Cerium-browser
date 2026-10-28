@@ -274,7 +274,11 @@ the Dock icon (`macos/compile_icon.py`) and the bundled extensions, signs it ad 
 
 The two build workflows split the build into a chain of jobs, each under GitHub's 6-hour job
 limit, and pass the build tree between them. A Linux build takes roughly a day; a macOS build
-on 3-core M1 runners can take longer.
+on 3-core M1 runners can take longer. If a macOS build fails partway, fix the cause and run
+**Build Cerium for macOS** again with the failed run's ID as `resume_run_id`: it continues from
+the last saved build tree instead of starting over. On a failure, the failing targets and their
+compiler messages appear as annotations on the run's summary page; Cerium's own changes are
+compiled first, so mistakes in them show up within the first job.
 
 Pushing a tag such as `156.0.8078.47-1` starts both builds; the Linux build adds its files to
 the GitHub release for that tag. Started by hand from the Actions tab, the Linux build only
