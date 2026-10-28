@@ -54,6 +54,9 @@ if [[ -n "$_cerium_targets" ]]; then
   if [[ "$_error_code" -ne 0 ]]; then
       exit "$_error_code"
   fi
+  echo "::notice::Cerium's changes compiled: $(wc -w <<< "$_cerium_targets") targets"
+else
+  echo "::warning::Found no targets for Cerium's changes; they are compiled with the rest"
 fi
 
 run_ninja chrome chromedriver
