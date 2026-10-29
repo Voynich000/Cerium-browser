@@ -61,12 +61,10 @@ jobs:
             > dom.html 2> launch.log
           grep -q '<title>ok</title>' dom.html
           # Keep it running for a while so that it installs the bundled
-          # extensions, then stop it.
-          set +e
+          # extensions, then stop it (the timeout is expected).
           perl -e 'alarm 45; exec @ARGV' "$binary" --headless=new --no-first-run \
             --user-data-dir="$RUNNER_TEMP/profile" --remote-debugging-port=0 about:blank \
-            > /dev/null 2> run.log
-          set -e
+            > /dev/null 2> run.log || true
           names="$(cat "$RUNNER_TEMP"/profile/Default/Extensions/*/*/manifest.json 2>/dev/null \
             | python3 -c 'import json, sys, re
           text = sys.stdin.read()
