@@ -40,8 +40,10 @@ def _patched_files():
 def _object_files(out_dir, sources):
     """Returns the default toolchain's object files for |sources|."""
     objects = set()
+    # Some compile commands contain bytes that are not UTF-8; only the "file"
+    # and "output" lines matter.
     process = subprocess.Popen(['ninja', '-C', str(out_dir), '-t', 'compdb'],
-                               stdout=subprocess.PIPE, text=True)
+                               stdout=subprocess.PIPE, encoding='utf-8', errors='replace')
     source = None
     # One "key": "value" pair per line; "file" comes before "output".
     for line in process.stdout:
