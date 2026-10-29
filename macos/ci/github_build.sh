@@ -33,6 +33,18 @@ run_ninja() {
   return "$status"
 }
 
+# Cerium: posts how far the build got (ninja's last "[done/total]" counter) to
+# the run's summary page.
+report_progress() {
+  local counter done total
+  counter="$(grep -ao '^\[[0-9]*/[0-9]*\]' "$_root_dir/ninja_output.log" | tail -n 1 | tr -d '[]')"
+  if [[ -n "$counter" ]]; then
+    done="${counter%/*}"
+    total="${counter#*/}"
+    echo "::notice::Build progress: $done of $total steps ($(( done * 100 / total ))%)"
+  fi
+}
+
 cd "$_src_dir"
 
 # The JavaScript half of esbuild, for DevTools' build scripts (the binary is
@@ -79,6 +91,7 @@ fi
 run_ninja chrome chromedriver
 
 _error_code="${?}"
+report_progress
 if [[ "$_error_code" -eq 124 ]]; then
     exit 0
 fi
