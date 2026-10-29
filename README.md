@@ -350,11 +350,13 @@ staples and checks the app the way Gatekeeper does.
   - codesign refused files that carried Finder metadata;
   - with ad hoc signing, library validation stopped the app from loading its own framework;
   - Chromium's keychain item name was shared with any installed Chromium.
-- **Not done yet: compiling.** A Chromium build needs about 100 GB and hours of CPU time, so the
-  C++ and TypeScript changes have not been compiled. They were written against the exact
-  Chromium 156 sources, but the first CI build is the real test. The macOS build and publish
-  workflows have not completed on a Mac yet. The signing code is ungoogled-chromium-macos's,
-  which its own releases use.
+- **macOS: compiled and released.** The macOS build compiled all of Chromium with Cerium's changes
+  on GitHub's Apple Silicon runners and published release `156.0.8078.47-1`.
+  `verify-macos-release.yml` downloaded its disk image like a user and checked its checksum,
+  contents and signature. It then installed Cerium, launched it, and saw it install uBlock Origin
+  and Dark Reader into a new profile.
+- **Not yet compiled: Linux.** The Linux build hasn't run yet; it starts when a version tag is
+  pushed.
 
 ## Platforms
 
