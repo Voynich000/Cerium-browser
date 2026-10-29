@@ -1,0 +1,80 @@
+name: Verify macOS release
+
+# Downloads a release's disk image the way users do and checks it: the
+# contents and signature, then installs Cerium, launches it and checks that
+# uBlock Origin and Dark Reader get installed in a new profile.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (e.g. 156.0.8078.47-1)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    name: Verify the disk image
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - name: Download and check the disk image
+        run: |
+          trap '_status=$?; echo "::error::line $LINENO: $BASH_COMMAND failed (exit status $_status)"' ERR
+          cd "$RUNNER_TEMP"
+          gh release download "$TAG" --pattern '*-arm64-macos.dmg*'
+          dmg="$(ls *.dmg)"
+          shasum -a 256 -c "$dmg.sha256"
+          mount="$(hdiutil attach -nobrowse -readonly "$dmg" | awk -F '\t' '/\/Volumes\// { print $NF; exit }')"
+          ls -la "$mount"
+          test -L "$mount/Applications"
+          test -f "$mount/How to open Cerium.txt"
+          app="$mount/Cerium.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$app/Contents/Info.plist")"
+          id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")"
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
+          ls "$app/Contents/Frameworks/Cerium Framework.framework/Resources/bundled_extensions"
+          mkdir -p installed
+          ditto "$app" installed/Cerium.app
+          hdiutil detach "$mount"
+          echo "::notice::$dmg: $name $version ($id), signature valid"
+
+      - name: Launch Cerium
+        run: |
+          trap '_status=$?; echo "::error::line $LINENO: $BASH_COMMAND failed (exit status $_status)"' ERR
+          cd "$RUNNER_TEMP"
+          binary=installed/Cerium.app/Contents/MacOS/Cerium
+          # Shows a page and quits: the app starts with its signature.
+          perl -e 'alarm 120; exec @ARGV' "$binary" --headless=new --no-first-run \
+            --user-data-dir="$RUNNER_TEMP/profile" --dump-dom 'data:text/html,<title>ok</title>' \
+            > dom.html 2> launch.log
+          grep -q '<title>ok</title>' dom.html
+          # Keep it running for a while so that it installs the bundled
+          # extensions, then stop it.
+          set +e
+          perl -e 'alarm 45; exec @ARGV' "$binary" --headless=new --no-first-run \
+            --user-data-dir="$RUNNER_TEMP/profile" --remote-debugging-port=0 about:blank \
+            > /dev/null 2> run.log
+          set -e
+          names="$(cat "$RUNNER_TEMP"/profile/Default/Extensions/*/*/manifest.json 2>/dev/null \
+            | python3 -c 'import json, sys, re
+          text = sys.stdin.read()
+          names = re.findall(r"\"name\"\s*:\s*\"([^\"]+)\"", text)
+          print(", ".join(sorted(set(names))))')"
+          echo "Installed extensions: $names"
+          if [[ "$names" != *"uBlock Origin"* || "$names" != *"Dark Reader"* ]]; then
+            echo "::error::Bundled extensions not installed (found: ${names:-none}). Log: $(grep -i extension run.log | tail -n 5 | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "::notice::Cerium starts, shows a page and installs its bundled extensions: $names"
