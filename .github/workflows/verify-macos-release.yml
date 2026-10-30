@@ -41,6 +41,14 @@ jobs:
           test -f "$mount/How to open Cerium.txt"
           app="$mount/Cerium.app"
           codesign --verify --deep --strict --verbose=2 "$app"
+          # Ad hoc signed code must not use the hardened runtime or library
+          # validation: macOS 27 then refuses to load the app's own framework.
+          flags="$(codesign -dv "$app" 2>&1 | sed -n 's/^CodeDirectory .*flags=[^(]*(\([^)]*\)).*/\1/p')"
+          echo "Code signing flags: $flags"
+          if codesign -dv "$app" 2>&1 | grep -q '^Signature=adhoc' && [[ "$flags" == *runtime* || "$flags" == *library* ]]; then
+            echo "::error::The ad hoc signed app uses the hardened runtime or library validation ($flags)"
+            exit 1
+          fi
           name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$app/Contents/Info.plist")"
           id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")"
           version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"

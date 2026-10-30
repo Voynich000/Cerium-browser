@@ -72,6 +72,10 @@ jobs:
           test -L "$mount/Applications"
           test -f "$mount/How to open Chromium.txt"
           codesign --verify --deep --strict --verbose=2 "$app"
+          if codesign -dv "$app" 2>&1 | grep -E '^CodeDirectory .*flags=.*(runtime|library)'; then
+            echo "::error::The ad hoc signed app uses the hardened runtime or library validation"
+            exit 1
+          fi
           cat "$resources/initial_preferences"
           extensions="$(cd "$resources/bundled_extensions" && ls *.crx | tr '\n' ' ')"
           if cmp -s <(shasum -a 256 < "$app/Contents/Resources/Assets.car") "$RUNNER_TEMP/upstream-icon.sha256"; then

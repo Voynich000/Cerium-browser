@@ -4,7 +4,8 @@
 #
 #   sign_app.sh path/to/Cerium.app
 #
-# Without MACOS_SIGNING_IDENTITY the app is signed ad hoc: it runs, but macOS
+# Without MACOS_SIGNING_IDENTITY the app is signed ad hoc, without the hardened
+# runtime and library validation (see adhoc_options): it runs, but macOS
 # blocks it on first launch until the user allows it in System Settings.
 # With these set it is signed with a Developer ID and notarized, so it opens
 # like any other downloaded app:
@@ -37,6 +38,26 @@ _identity="${MACOS_SIGNING_IDENTITY:-}"
 # See https://github.com/ungoogled-software/ungoogled-chromium-macos/issues/361
 _bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$_app/Contents/Info.plist")"
 
+# Drops the options that ad hoc signed code cannot use from a --options value
+# ("restrict,library,runtime,kill" -> "restrict,kill"). Library validation
+# only lets a process load code signed by its own team, and ad hoc signatures
+# have no team, so the app could not load its own framework. The hardened
+# runtime forces library validation too (CS_FORCED_LV, enforced by macOS 27);
+# it is only needed for notarization.
+adhoc_options() {
+  local value="$1" prefix="" option
+  local kept=()
+  if [[ "$value" == --options=* ]]; then
+    prefix="--options="
+    value="${value#--options=}"
+  fi
+  IFS=',' read -ra _options <<< "$value"
+  for option in "${_options[@]}"; do
+    [[ "$option" == library || "$option" == runtime ]] || kept+=("$option")
+  done
+  (IFS=','; printf '%s%s\n' "$prefix" "${kept[*]}")
+}
+
 sign() {
   local output arg
   local status=0
@@ -44,10 +65,7 @@ sign() {
   local args=()
   for arg in "$@"; do
     if [[ -z "$_identity" && ( "$previous" == --options || "$arg" == --options=* ) ]]; then
-      # Library validation only lets a process load code from its own team,
-      # and ad hoc signatures have no team: the app could not load its own
-      # framework. Keep the other hardening options.
-      arg="$(sed -E 's/(^|[=,])library(,|$)/\1/; s/,$//' <<< "$arg")"
+      arg="$(adhoc_options "$arg")"
     fi
     args+=("$arg")
     previous="$arg"

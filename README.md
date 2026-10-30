@@ -348,7 +348,9 @@ staples and checks the app the way Gatekeeper does.
   extensions, signs ad hoc and builds the disk image. Then it installs the app from the image and
   launches it twice; the app shows a page and quits cleanly. This found three problems, now fixed:
   - codesign refused files that carried Finder metadata;
-  - with ad hoc signing, library validation stopped the app from loading its own framework;
+  - with ad hoc signing, library validation stopped the app from loading its own framework.
+    The hardened runtime also forces it on macOS 27, which a tester's Mac showed after the first
+    release: ad hoc builds are now signed without either;
   - Chromium's keychain item name was shared with any installed Chromium.
 - **macOS: compiled and released.** The macOS build compiled all of Chromium with Cerium's changes
   on GitHub's Apple Silicon runners and published release `156.0.8078.47-1`.
