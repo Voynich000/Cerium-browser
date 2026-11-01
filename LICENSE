@@ -38,5 +38,12 @@ entitlements/) and .github/workflows/build-macos-steps.yml are derived from
 ungoogled-chromium-macos (https://github.com/ungoogled-software/ungoogled-chromium-macos),
 Copyright The ungoogled-chromium Authors, under the license above.
 
+The Windows build harness in windows/ (build.py, package.py, downloads.ini,
+flags.windows.gn, pruning.list, domain_substitution.list and
+patches/ungoogled-chromium/) and .github/actions/windows-prepare and
+windows-stage are derived from ungoogled-chromium-windows
+(https://github.com/ungoogled-software/ungoogled-chromium-windows),
+Copyright The ungoogled-chromium Authors, under the license above.
+
 The bundled extensions keep their own licenses: uBlock Origin is GPL-3.0-or-later
 and Dark Reader is MIT (see extensions/licenses/).

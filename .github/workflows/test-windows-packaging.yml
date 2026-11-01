@@ -1,0 +1,42 @@
+name: Test Windows packaging
+
+# Runs windows/test_package.ps1, the tests "Publish Cerium for Windows" runs
+# before it publishes a build, on ungoogled-chromium-windows's latest x64
+# installer and .zip, which have the same layout as Cerium's (named Chromium,
+# without bundled extensions). This tests changes to the script in minutes
+# instead of after a full build.
+on:
+  push:
+    paths:
+      - 'windows/test_package.ps1'
+      - '.github/workflows/test-windows-packaging.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test ungoogled-chromium's packages on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Get ungoogled-chromium for Windows
+        shell: bash
+        run: |
+          gh release download --repo ungoogled-software/ungoogled-chromium-windows \
+            --pattern '*x64*' --dir upstream
+          ls -la upstream
+          echo "::notice::Testing with $(cd upstream && ls | tr '\n' ' ')"
+
+      - name: Install, start and uninstall it; start it from the .zip
+        shell: pwsh
+        run: windows/test_package.ps1 -Packages upstream -Upstream

@@ -74,8 +74,18 @@ fetch_sources() {
 apply_patches() {
     if [ ! -f "${_src_dir}/.patched.stamp" ]; then
         "${_main_repo}/utils/prune_binaries.py" "${_src_dir}" "${_main_repo}/pruning.list"
-        # CERIUM_PATCHES_DIR=macos/patches (relative to the repository root)
-        # applies the macOS series instead; scripts/check-patches.sh uses it
+        if [ "${CERIUM_PATCHES_DIR:-patches}" = windows/patches ]; then
+            # One Windows patch changes the TypeScript compiler that
+            # windows/build.py downloads before patching (windows/downloads.ini)
+            "${_main_repo}/utils/downloads.py" retrieve -i "${_root}/windows/downloads.ini" \
+                -c "${_dl_cache}" --components typescript --hide-progress-bar
+            mkdir -p "${_src_dir}/third_party/typescript/windows-amd64/src"
+            "${_main_repo}/utils/downloads.py" unpack -i "${_root}/windows/downloads.ini" \
+                -c "${_dl_cache}" "${_src_dir}" --components typescript
+        fi
+        # CERIUM_PATCHES_DIR=macos/patches or windows/patches (relative to the
+        # repository root) applies that series instead; scripts/check-patches.sh
+        # uses it
         "${_main_repo}/utils/patches.py" apply "${_src_dir}" "${_main_repo}/patches" "${_root}/${CERIUM_PATCHES_DIR:-patches}"
         touch "${_src_dir}/.patched.stamp"
     fi

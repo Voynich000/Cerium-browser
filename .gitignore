@@ -12,3 +12,5 @@
 # Extension signing keys (see utils/bundle_extensions.py). Never commit them.
 /keys/
 __pycache__/
+/windows/build/
+node_modules/

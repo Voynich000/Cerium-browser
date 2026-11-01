@@ -41,7 +41,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 120
     concurrency:
-      group: publish-macos
+      group: publish-release
       cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}

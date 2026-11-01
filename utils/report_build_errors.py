@@ -4,11 +4,14 @@
 # found in the LICENSE file.
 """Prints the failures in a ninja log as GitHub Actions error annotations.
 
-A failing compile is easy to miss in hours of build output, so github_build.sh
-turns each "FAILED:" block (the target and the compiler's messages, without
-the long command line) into an annotation on the run's summary page:
+A failing compile is easy to miss in hours of build output, so the macOS and
+Windows builds turn each "FAILED:" block (the target and the compiler's
+messages, without the long command line) into an annotation on the run's
+summary page:
 
   report_build_errors.py <ninja output>
+
+report_progress() posts how far the build got (ninja's last "[done/total]").
 """
 
 import re
@@ -25,9 +28,23 @@ def _annotation(message):
     print(f'::error::{escaped}')
 
 
-def main():
-    with open(sys.argv[1], encoding='utf-8', errors='replace') as log:
-        lines = [_ANSI.sub('', line.rstrip('\n')) for line in log]
+def _read(path):
+    with open(path, encoding='utf-8', errors='replace') as log:
+        return [_ANSI.sub('', line.rstrip('\n')) for line in log]
+
+
+def report_progress(path):
+    """Posts ninja's last "[done/total]" counter in |path| as a notice."""
+    counters = [_PROGRESS.match(line) for line in _read(path)]
+    counters = [match.group(0) for match in counters if match]
+    if counters:
+        done, total = (int(n) for n in counters[-1].strip('[]').split('/'))
+        print(f'::notice::Build progress: {done} of {total} steps ({done * 100 // total}%)')
+
+
+def report(path):
+    """Posts each failure in the ninja output |path| as an error annotation."""
+    lines = _read(path)
 
     blocks = []
     current = None
@@ -45,6 +62,10 @@ def main():
         _annotation('\n'.join(block))
     if not blocks:
         _annotation('ninja failed; its last lines:\n' + '\n'.join(lines[-40:])[-_MAX_LENGTH:])
+
+
+def main():
+    report(sys.argv[1])
 
 
 if __name__ == '__main__':

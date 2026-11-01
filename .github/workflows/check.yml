@@ -25,6 +25,8 @@ jobs:
             patches: patches
           - platform: macos
             patches: macos/patches
+          - platform: windows
+            patches: windows/patches
     steps:
       - uses: actions/checkout@v4
         with: { submodules: true }

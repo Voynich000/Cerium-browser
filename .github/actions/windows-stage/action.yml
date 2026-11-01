@@ -1,0 +1,30 @@
+name: Windows build stage
+description: >-
+  Runs windows/build.py for up to 3.5 hours. If the build is not finished, it
+  uploads the build tree for the next stage; if it is, the installer and the
+  .zip. From ungoogled-chromium-windows's stage action.
+inputs:
+  finished:
+    description: Whether a previous stage already finished the build (then this stage does nothing)
+    required: true
+  from_artifact:
+    description: Whether to continue the build tree a previous stage uploaded
+    required: true
+  from_run:
+    description: Run ID to take that build tree from (default this run), to continue a failed build
+    required: false
+    default: ''
+  jobs:
+    description: Parallel compile jobs (ninja -j)
+    required: false
+    default: '3'
+  token:
+    description: Token to download another run's build tree
+    required: false
+    default: ''
+outputs:
+  finished:
+    description: Whether the build is finished
+runs:
+  using: 'node24'
+  main: 'index.js'

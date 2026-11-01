@@ -1,0 +1,543 @@
+name: Build Cerium for Windows
+
+# x64 (64-bit Intel and AMD) build on GitHub's Windows runners, from
+# ungoogled-chromium-windows's workflow. Compiling Chromium takes longer than
+# a job may run (6 hours), so the build is split into up to 16 jobs ("stages")
+# of 3.5 hours of compiling each: each stage continues the build tree that the
+# previous one saved (.github/actions/windows-stage). The build ends with the
+# installer and the .zip as the artifact cerium-windows-x64, which "Publish
+# Cerium for Windows" (release-windows.yml) then tests on Windows and, only if
+# every test passes, publishes in the GitHub release for its version.
+#
+# A failed or cancelled build continues from its last saved stage: run this
+# workflow with resume_run_id set to that run's ID (or re-run its failed jobs).
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+.[0-9]+-[0-9]+'
+  workflow_dispatch:
+    inputs:
+      resume_run_id:
+        description: Run ID of an earlier build that failed or was cancelled, to continue from its last saved stage (empty starts from scratch)
+        default: ''
+        type: string
+      jobs:
+        description: Parallel compile jobs (ninja -j); GitHub's Windows runners have 4 CPU cores and 16 GB of memory
+        default: '3'
+        type: string
+      publish:
+        description: Publish the build in the GitHub release once it passes the tests
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read  # to continue an earlier run's build
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-1:
+    name: Build (stage 1)
+    runs-on: windows-2022
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Prepare
+        uses: ./.github/actions/windows-prepare
+      - name: Build
+        id: stage
+        uses: ./.github/actions/windows-stage
+        env:
+          # Keys that sign the bundled extensions (their IDs; see the README).
+          # The stage that finishes compiling the browser signs them.
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        with:
+          finished: false
+          from_artifact: ${{ inputs.resume_run_id != '' }}
+          from_run: ${{ inputs.resume_run_id }}
+          jobs: ${{ inputs.jobs || '3' }}
+          token: ${{ github.token }}
+
+  build-2:
+    name: Build (stage 2)
+    needs: build-1
+    # Once the build is finished, the remaining stages skip their steps on a
+    # small Linux runner. (Skipping the jobs instead would skip the publish job
+    # as well: GitHub skips jobs whose dependencies were skipped.)
+    runs-on: ${{ needs.build-1.outputs.finished == 'true' && 'ubuntu-latest' || 'windows-2022' }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished || needs.build-1.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v7
+        if: needs.build-1.outputs.finished != 'true'
+        with:
+          submodules: true
+      - name: Prepare
+        if: needs.build-1.outputs.finished != 'true'
+        uses: ./.github/actions/windows-prepare
+      - name: Build
+        id: stage
+        if: needs.build-1.outputs.finished != 'true'
+        uses: ./.github/actions/windows-stage
+        env:
+          # Keys that sign the bundled extensions (their IDs; see the README).
+          # The stage that finishes compiling the browser signs them.
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        with:
+          finished: false
+          from_artifact: true
+          jobs: ${{ inputs.jobs || '3' }}
+          token: ${{ github.token }}
+
+  build-3:
+    name: Build (stage 3)
+    needs: build-2
+    runs-on: ${{ needs.build-2.outputs.finished == 'true' && 'ubuntu-latest' || 'windows-2022' }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished || needs.build-2.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v7
+        if: needs.build-2.outputs.finished != 'true'
+        with:
+          submodules: true
+      - name: Prepare
+        if: needs.build-2.outputs.finished != 'true'
+        uses: ./.github/actions/windows-prepare
+      - name: Build
+        id: stage
+        if: needs.build-2.outputs.finished != 'true'
+        uses: ./.github/actions/windows-stage
+        env:
+          # Keys that sign the bundled extensions (their IDs; see the README).
+          # The stage that finishes compiling the browser signs them.
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        with:
+          finished: false
+          from_artifact: true
+          jobs: ${{ inputs.jobs || '3' }}
+          token: ${{ github.token }}
+
+  build-4:
+    name: Build (stage 4)
+    needs: build-3
+    runs-on: ${{ needs.build-3.outputs.finished == 'true' && 'ubuntu-latest' || 'windows-2022' }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished || needs.build-3.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v7
+        if: needs.build-3.outputs.finished != 'true'
+        with:
+          submodules: true
+      - name: Prepare
+        if: needs.build-3.outputs.finished != 'true'
+        uses: ./.github/actions/windows-prepare
+      - name: Build
+        id: stage
+        if: needs.build-3.outputs.finished != 'true'
+        uses: ./.github/actions/windows-stage
+        env:
+          # Keys that sign the bundled extensions (their IDs; see the README).
+          # The stage that finishes compiling the browser signs them.
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        with:
+          finished: false
+          from_artifact: true
+          jobs: ${{ inputs.jobs || '3' }}
+          token: ${{ github.token }}
+
+  build-5:
+    name: Build (stage 5)
+    needs: build-4
+    runs-on: ${{ needs.build-4.outputs.finished == 'true' && 'ubuntu-latest' || 'windows-2022' }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished || needs.build-4.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v7
+        if: needs.build-4.outputs.finished != 'true'
+        with:
+          submodules: true
+      - name: Prepare
+        if: needs.build-4.outputs.finished != 'true'
+        uses: ./.github/actions/windows-prepare
+      - name: Build
+        id: stage
+        if: needs.build-4.outputs.finished != 'true'
+        uses: ./.github/actions/windows-stage
+        env:
+          # Keys that sign the bundled extensions (their IDs; see the README).
+          # The stage that finishes compiling the browser signs them.
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        with:
+          finished: false
+          from_artifact: true
+          jobs: ${{ inputs.jobs || '3' }}
+          token: ${{ github.token }}
+
+  build-6:
+    name: Build (stage 6)
+    needs: build-5
+    runs-on: ${{ needs.build-5.outputs.finished == 'true' && 'ubuntu-latest' || 'windows-2022' }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished || needs.build-5.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v7
+        if: needs.build-5.outputs.finished != 'true'
+        with:
+          submodules: true
+      - name: Prepare
+        if: needs.build-5.outputs.finished != 'true'
+        uses: ./.github/actions/windows-prepare
+      - name: Build
+        id: stage
+        if: needs.build-5.outputs.finished != 'true'
+        uses: ./.github/actions/windows-stage
+        env:
+          # Keys that sign the bundled extensions (their IDs; see the README).
+          # The stage that finishes compiling the browser signs them.
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        with:
+          finished: false
+          from_artifact: true
+          jobs: ${{ inputs.jobs || '3' }}
+          token: ${{ github.token }}
+
+  build-7:
+    name: Build (stage 7)
+    needs: build-6
+    runs-on: ${{ needs.build-6.outputs.finished == 'true' && 'ubuntu-latest' || 'windows-2022' }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished || needs.build-6.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v7
+        if: needs.build-6.outputs.finished != 'true'
+        with:
+          submodules: true
+      - name: Prepare
+        if: needs.build-6.outputs.finished != 'true'
+        uses: ./.github/actions/windows-prepare
+      - name: Build
+        id: stage
+        if: needs.build-6.outputs.finished != 'true'
+        uses: ./.github/actions/windows-stage
+        env:
+          # Keys that sign the bundled extensions (their IDs; see the README).
+          # The stage that finishes compiling the browser signs them.
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        with:
+          finished: false
+          from_artifact: true
+          jobs: ${{ inputs.jobs || '3' }}
+          token: ${{ github.token }}
+
+  build-8:
+    name: Build (stage 8)
+    needs: build-7
+    runs-on: ${{ needs.build-7.outputs.finished == 'true' && 'ubuntu-latest' || 'windows-2022' }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished || needs.build-7.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v7
+        if: needs.build-7.outputs.finished != 'true'
+        with:
+          submodules: true
+      - name: Prepare
+        if: needs.build-7.outputs.finished != 'true'
+        uses: ./.github/actions/windows-prepare
+      - name: Build
+        id: stage
+        if: needs.build-7.outputs.finished != 'true'
+        uses: ./.github/actions/windows-stage
+        env:
+          # Keys that sign the bundled extensions (their IDs; see the README).
+          # The stage that finishes compiling the browser signs them.
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        with:
+          finished: false
+          from_artifact: true
+          jobs: ${{ inputs.jobs || '3' }}
+          token: ${{ github.token }}
+
+  build-9:
+    name: Build (stage 9)
+    needs: build-8
+    runs-on: ${{ needs.build-8.outputs.finished == 'true' && 'ubuntu-latest' || 'windows-2022' }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished || needs.build-8.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v7
+        if: needs.build-8.outputs.finished != 'true'
+        with:
+          submodules: true
+      - name: Prepare
+        if: needs.build-8.outputs.finished != 'true'
+        uses: ./.github/actions/windows-prepare
+      - name: Build
+        id: stage
+        if: needs.build-8.outputs.finished != 'true'
+        uses: ./.github/actions/windows-stage
+        env:
+          # Keys that sign the bundled extensions (their IDs; see the README).
+          # The stage that finishes compiling the browser signs them.
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        with:
+          finished: false
+          from_artifact: true
+          jobs: ${{ inputs.jobs || '3' }}
+          token: ${{ github.token }}
+
+  build-10:
+    name: Build (stage 10)
+    needs: build-9
+    runs-on: ${{ needs.build-9.outputs.finished == 'true' && 'ubuntu-latest' || 'windows-2022' }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished || needs.build-9.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v7
+        if: needs.build-9.outputs.finished != 'true'
+        with:
+          submodules: true
+      - name: Prepare
+        if: needs.build-9.outputs.finished != 'true'
+        uses: ./.github/actions/windows-prepare
+      - name: Build
+        id: stage
+        if: needs.build-9.outputs.finished != 'true'
+        uses: ./.github/actions/windows-stage
+        env:
+          # Keys that sign the bundled extensions (their IDs; see the README).
+          # The stage that finishes compiling the browser signs them.
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        with:
+          finished: false
+          from_artifact: true
+          jobs: ${{ inputs.jobs || '3' }}
+          token: ${{ github.token }}
+
+  build-11:
+    name: Build (stage 11)
+    needs: build-10
+    runs-on: ${{ needs.build-10.outputs.finished == 'true' && 'ubuntu-latest' || 'windows-2022' }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished || needs.build-10.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v7
+        if: needs.build-10.outputs.finished != 'true'
+        with:
+          submodules: true
+      - name: Prepare
+        if: needs.build-10.outputs.finished != 'true'
+        uses: ./.github/actions/windows-prepare
+      - name: Build
+        id: stage
+        if: needs.build-10.outputs.finished != 'true'
+        uses: ./.github/actions/windows-stage
+        env:
+          # Keys that sign the bundled extensions (their IDs; see the README).
+          # The stage that finishes compiling the browser signs them.
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        with:
+          finished: false
+          from_artifact: true
+          jobs: ${{ inputs.jobs || '3' }}
+          token: ${{ github.token }}
+
+  build-12:
+    name: Build (stage 12)
+    needs: build-11
+    runs-on: ${{ needs.build-11.outputs.finished == 'true' && 'ubuntu-latest' || 'windows-2022' }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished || needs.build-11.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v7
+        if: needs.build-11.outputs.finished != 'true'
+        with:
+          submodules: true
+      - name: Prepare
+        if: needs.build-11.outputs.finished != 'true'
+        uses: ./.github/actions/windows-prepare
+      - name: Build
+        id: stage
+        if: needs.build-11.outputs.finished != 'true'
+        uses: ./.github/actions/windows-stage
+        env:
+          # Keys that sign the bundled extensions (their IDs; see the README).
+          # The stage that finishes compiling the browser signs them.
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        with:
+          finished: false
+          from_artifact: true
+          jobs: ${{ inputs.jobs || '3' }}
+          token: ${{ github.token }}
+
+  build-13:
+    name: Build (stage 13)
+    needs: build-12
+    runs-on: ${{ needs.build-12.outputs.finished == 'true' && 'ubuntu-latest' || 'windows-2022' }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished || needs.build-12.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v7
+        if: needs.build-12.outputs.finished != 'true'
+        with:
+          submodules: true
+      - name: Prepare
+        if: needs.build-12.outputs.finished != 'true'
+        uses: ./.github/actions/windows-prepare
+      - name: Build
+        id: stage
+        if: needs.build-12.outputs.finished != 'true'
+        uses: ./.github/actions/windows-stage
+        env:
+          # Keys that sign the bundled extensions (their IDs; see the README).
+          # The stage that finishes compiling the browser signs them.
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        with:
+          finished: false
+          from_artifact: true
+          jobs: ${{ inputs.jobs || '3' }}
+          token: ${{ github.token }}
+
+  build-14:
+    name: Build (stage 14)
+    needs: build-13
+    runs-on: ${{ needs.build-13.outputs.finished == 'true' && 'ubuntu-latest' || 'windows-2022' }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished || needs.build-13.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v7
+        if: needs.build-13.outputs.finished != 'true'
+        with:
+          submodules: true
+      - name: Prepare
+        if: needs.build-13.outputs.finished != 'true'
+        uses: ./.github/actions/windows-prepare
+      - name: Build
+        id: stage
+        if: needs.build-13.outputs.finished != 'true'
+        uses: ./.github/actions/windows-stage
+        env:
+          # Keys that sign the bundled extensions (their IDs; see the README).
+          # The stage that finishes compiling the browser signs them.
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        with:
+          finished: false
+          from_artifact: true
+          jobs: ${{ inputs.jobs || '3' }}
+          token: ${{ github.token }}
+
+  build-15:
+    name: Build (stage 15)
+    needs: build-14
+    runs-on: ${{ needs.build-14.outputs.finished == 'true' && 'ubuntu-latest' || 'windows-2022' }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished || needs.build-14.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v7
+        if: needs.build-14.outputs.finished != 'true'
+        with:
+          submodules: true
+      - name: Prepare
+        if: needs.build-14.outputs.finished != 'true'
+        uses: ./.github/actions/windows-prepare
+      - name: Build
+        id: stage
+        if: needs.build-14.outputs.finished != 'true'
+        uses: ./.github/actions/windows-stage
+        env:
+          # Keys that sign the bundled extensions (their IDs; see the README).
+          # The stage that finishes compiling the browser signs them.
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        with:
+          finished: false
+          from_artifact: true
+          jobs: ${{ inputs.jobs || '3' }}
+          token: ${{ github.token }}
+
+  build-16:
+    name: Build (stage 16)
+    needs: build-15
+    runs-on: ${{ needs.build-15.outputs.finished == 'true' && 'ubuntu-latest' || 'windows-2022' }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished || needs.build-15.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v7
+        if: needs.build-15.outputs.finished != 'true'
+        with:
+          submodules: true
+      - name: Prepare
+        if: needs.build-15.outputs.finished != 'true'
+        uses: ./.github/actions/windows-prepare
+      - name: Build
+        id: stage
+        if: needs.build-15.outputs.finished != 'true'
+        uses: ./.github/actions/windows-stage
+        env:
+          # Keys that sign the bundled extensions (their IDs; see the README).
+          # The stage that finishes compiling the browser signs them.
+          CERIUM_UBLOCK_ORIGIN_KEY: ${{ secrets.CERIUM_UBLOCK_ORIGIN_KEY }}
+          CERIUM_DARK_READER_KEY: ${{ secrets.CERIUM_DARK_READER_KEY }}
+        with:
+          finished: false
+          from_artifact: true
+          jobs: ${{ inputs.jobs || '3' }}
+          token: ${{ github.token }}
+
+  publish:
+    name: Test and publish
+    needs: build-16
+    if: needs.build-16.outputs.finished == 'true'
+    permissions:
+      contents: write  # to publish
+      actions: read
+    uses: ./.github/workflows/release-windows.yml
+    with:
+      run_id: ${{ github.run_id }}
+      publish: ${{ github.event_name == 'push' || inputs.publish }}
+
+  unfinished:
+    name: Check that the build finished
+    needs: build-16
+    if: needs.build-16.outputs.finished != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report
+        run: |
+          echo "::error::The build did not finish in 16 stages. Continue it: run this workflow with resume_run_id=${{ github.run_id }}"
+          exit 1

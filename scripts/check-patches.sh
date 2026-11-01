@@ -5,7 +5,8 @@ set -euo pipefail
 # scripts/build.sh (binary pruning, ungoogled-chromium's patches, patches/series,
 # domain substitution and renaming to Cerium) without building anything.
 # Needs python3, GNU patch and about 20 GB of disk space.
-# Set CERIUM_PATCHES_DIR=macos/patches to check the macOS patch series instead.
+# Set CERIUM_PATCHES_DIR=macos/patches or windows/patches to check the macOS or
+# Windows patch series instead.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)/shared.sh"
 

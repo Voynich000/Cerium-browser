@@ -15,12 +15,15 @@ Releases have builds for:
 
 - **Linux** (x86_64 and arm64): `.AppImage` and `.tar.xz`;
 - **macOS on Apple Silicon** (M-series chips): `.dmg`. See [Installing on macOS](#installing-on-macos).
+- **Windows** (x64, i.e. 64-bit Intel and AMD processors): an installer and a `.zip`. See
+  [Installing on Windows](#installing-on-windows).
 
 Base: Chromium 156.0.8078.47 with ungoogled-chromium at commit `8025d45`, the commit its
 macOS release uses. The build harnesses are taken from
 [ungoogled-chromium-portablelinux](https://github.com/ungoogled-software/ungoogled-chromium-portablelinux)
-(Linux) and [ungoogled-chromium-macos](https://github.com/ungoogled-software/ungoogled-chromium-macos)
-(macOS) at their 156.0.8078.47 releases.
+(Linux), [ungoogled-chromium-macos](https://github.com/ungoogled-software/ungoogled-chromium-macos)
+(macOS) and [ungoogled-chromium-windows](https://github.com/ungoogled-software/ungoogled-chromium-windows)
+(Windows) at their 156.0.8078.47 releases.
 
 ## Installing on macOS
 
@@ -41,6 +44,25 @@ click **Always Allow**. It asks because each release has a new ad hoc signature.
 
 uBlock Origin and Dark Reader are already installed and pinned to the toolbar. The disk image
 also contains these steps, in "How to open Cerium.txt".
+
+## Installing on Windows
+
+For 64-bit Windows 10 and 11 on Intel and AMD processors (x64), from the
+[latest release](https://github.com/Voynich000/cerium-browser/releases/latest):
+
+- **Installer:** download `cerium-<version>-x64-windows-setup.exe` and run it. It installs
+  Cerium for your Windows account only, so it needs no administrator rights, and then opens it.
+  Cerium is in the Start menu afterwards; uninstall it in **Settings → Apps**.
+- **Without installing:** download `cerium-<version>-x64-windows.zip`, extract it and run
+  `chrome.exe` in the extracted folder. It keeps its settings in the same place as an installed
+  Cerium, `%LOCALAPPDATA%\Cerium\User Data`.
+
+Cerium isn't signed with a code signing certificate, so Windows SmartScreen may say "Windows
+protected your PC" when you run the installer. Click **More info**, then **Run anyway**. Your
+browser may also ask whether to keep the download; choose **Keep**.
+
+uBlock Origin and Dark Reader are already installed. Cerium never shares its profile, settings
+or registry entries with an installed Chromium.
 
 ## The Google services switch
 
@@ -144,9 +166,10 @@ Reader and lose their settings.
   gh secret set CERIUM_DARK_READER_KEY < keys/dark_reader.pem
   ```
 
-  The Linux workflow signs the extensions in its packaging step at the very end of a build, and
-  the macOS one when it publishes the disk image. A secret added while a build is running is
-  still used. Without the secrets, a build creates new keys and warns.
+  The Linux workflow signs the extensions in its packaging step at the very end of a build, the
+  macOS one when it publishes the disk image, and the Windows one once the browser is compiled,
+  just before it builds the installer. A secret added while a build is running is still used.
+  Without the secrets, a build creates new keys and warns.
 
 Never publish the keys. Anyone holding them can produce extensions with the same IDs.
 
@@ -171,6 +194,13 @@ Settings, menus, dialogs and error pages, in all 81 languages.
   cookies under "Cerium Safe Storage" in the macOS keychain and the Linux secret store, so
   Cerium never shares Chromium's. This name must never change: a new name means a new key, and
   existing passwords and cookies could no longer be decrypted.
+- `windows/patches/cerium-windows/rebrand-windows-identity.patch` gives Cerium its own Windows
+  identity, so it never clashes with an installed Chromium:
+  - installed in `%LOCALAPPDATA%\Cerium\Application`, with its profile in
+    `%LOCALAPPDATA%\Cerium\User Data` and its settings under `HKEY_CURRENT_USER\Software\Cerium`;
+  - "Cerium" in the Start menu and in Settings → Apps;
+  - its own file types (`CeriumHTM`, `CeriumPDF`), `cerium:` URL scheme, notification and
+    service class IDs, and sandbox identity.
 
 Some things deliberately still say Chromium:
 
@@ -193,11 +223,15 @@ The logo is Chromium's own logo in Cerium's colours:
 
 `branding/cerium/logo.svg` and `logo-animation.svg` are Chromium's `product_logo.svg` and
 `product_logo_animation.svg` with those colours swapped. `branding/render.js` renders them into
-`branding/overlay/`, which mirrors 30 logo files in the Chromium source tree:
+`branding/overlay/`, which mirrors 35 logo files in the Chromium source tree:
 
 - app icons from 16 to 256 px, at 1× and 2×, and the macOS `app.icns`;
 - the "cerium" wordmarks, in dark and white, using the Inter Display font;
-- the favicon and the SVG logos.
+- the favicon and the SVG logos;
+- the Windows icons: the app icon, the icons of HTML and PDF files (`.ico`, 16 to 256 px) and
+  the Start menu tiles. `branding/make_windows_icons.py` makes them from Chromium's own by
+  replacing each pixel of Chromium's logo with Cerium's, keeping the document page and the PDF
+  badge.
 
 The monochrome tray icon stays Chromium's, since it is already grey.
 
@@ -262,6 +296,31 @@ The build renames the app (`Cerium.app`). Then `macos/package_dmg.sh` copies the
 the Dock icon (`macos/compile_icon.py`) and the bundled extensions, signs it ad hoc
 (`macos/sign_app.sh`) and makes the disk image.
 
+## Building (Windows)
+
+`windows/` is Cerium's copy of the ungoogled-chromium-windows harness (156.0.8078.47-1.1). Its
+patch series (`windows/patches/series`) is the Windows build fixes, then Cerium's shared
+patches, then two Windows-only ones in `windows/patches/cerium-windows/`:
+
+- Cerium's Windows identity (see [Branding](#branding));
+- the bundled extensions in the installer (`chrome.release`), plus reading `initial_preferences`
+  from the installed version folder.
+
+On Windows 10 or 11 (x64) with Visual Studio 2022 (the "Desktop development with C++" workload),
+the Windows SDK 10.0.28000.0, Python 3.12, Git and 7-Zip, in a short path such as `C:\cerium`
+(Chromium's paths are long):
+
+```bat
+git clone --recurse-submodules <this repository> C:\cerium
+cd C:\cerium\windows
+pip install httplib2==0.22.0 clang==21.1.7 cryptography
+python build.py      &:: clones Chromium, patches, adds the extensions, builds chrome and the installer
+python package.py    &:: build\cerium-<version>-x64-windows-setup.exe and build\cerium-<version>-x64-windows.zip
+```
+
+The installer is Chromium's `mini_installer`. It installs Cerium for the current user, needs no
+administrator rights and registers an uninstaller.
+
 ## GitHub Actions
 
 | Workflow | What it does |
@@ -269,20 +328,32 @@ the Dock icon (`macos/compile_icon.py`) and the bundled extensions, signs it ad 
 | `build.yml` | Linux x86_64 and arm64 on the free Ubuntu runners |
 | `build-macos.yml` | macOS Apple Silicon on the free `macos-15` (M1) runners; ends with `Cerium.app` as a build artifact |
 | `release-macos.yml` | **Publish Cerium for macOS**: runs after each finished macOS build; adds the extensions, signs the app, makes the `.dmg` and publishes the GitHub release |
-| `check.yml` | Checks the Linux and macOS patch series on every push and pull request |
+| `build-windows.yml` | Windows x64 on the free `windows-2022` runners; ends with the installer and the `.zip`, then runs `release-windows.yml` |
+| `release-windows.yml` | **Publish Cerium for Windows**: tests the installer and the `.zip` on Windows Server 2022 and 2025 and, only if every test passes, publishes them in the GitHub release |
+| `check.yml` | Checks the Linux, macOS and Windows patch series on every push and pull request |
 | `check-macos-icon.yml` | Compiles the macOS app icon with Xcode when its sources change |
+| `test-macos-packaging.yml`, `test-windows-packaging.yml` | Test the packaging and the tests on ungoogled-chromium's own releases, in minutes |
 
-The two build workflows split the build into a chain of jobs, each under GitHub's 6-hour job
-limit, and pass the build tree between them. A Linux build takes roughly a day; a macOS build
-on 3-core M1 runners can take longer. If a macOS build fails partway, fix the cause and run
-**Build Cerium for macOS** again with the failed run's ID as `resume_run_id`: it continues from
-the last saved build tree instead of starting over. On a failure, the failing targets and their
-compiler messages appear as annotations on the run's summary page; Cerium's own changes are
-compiled first, so mistakes in them show up within the first job.
+The build workflows split the build into a chain of jobs, each under GitHub's 6-hour job
+limit, and pass the build tree between them. A Linux build takes roughly a day; macOS and
+Windows builds can take longer. If a macOS or Windows build fails partway, fix the cause and
+run it again with the failed run's ID as `resume_run_id`: it continues from the last saved
+build tree instead of starting over. On a failure, the failing targets and their compiler
+messages appear as annotations on the run's summary page; Cerium's own changes are compiled
+first, so mistakes in them show up within the first job.
 
 Pushing a tag such as `156.0.8078.47-1` starts both builds; the Linux build adds its files to
 the GitHub release for that tag. Started by hand from the Actions tab, the Linux build only
 produces build artifacts.
+
+Every Windows build that finishes is tested by `release-windows.yml` on Windows Server 2022
+and 2025 with `windows/test_package.ps1`, which installs Cerium with the installer, checks the
+installed files, version, icon, Apps entry and Start menu shortcut, opens it and waits for
+uBlock Origin and Dark Reader to be installed in the default profile, uninstalls it, and then
+does the same with the `.zip`. Only if all of that passes does it add the installer, the `.zip`
+and their SHA-256 files to the GitHub release for the version, with a Windows section in the
+release notes. To test and publish a finished build again without rebuilding, run **Publish
+Cerium for Windows** from the Actions tab.
 
 Every macOS build that finishes, whether started by a tag or by hand, is published by
 `release-macos.yml`. It takes the app from the build, adds the bundled extensions, signs it,
@@ -295,7 +366,8 @@ leave that empty for the latest build.
 `check.yml` takes about 15 minutes per platform. It runs the tooling tests and applies the
 whole patch stack, domain substitution and the Cerium rename to the real Chromium source
 (`scripts/check-patches.sh`). You can run that script locally too; it needs python3, GNU patch
-and about 20 GB of disk. Set `CERIUM_PATCHES_DIR=macos/patches` to check the macOS series.
+and about 20 GB of disk. Set `CERIUM_PATCHES_DIR=macos/patches` or `windows/patches` to check
+the macOS or Windows series.
 
 ### Optional: notarized releases
 
@@ -315,7 +387,11 @@ staples and checks the app the way Gatekeeper does.
    `patches/ungoogled-chromium/portablelinux/` and `patches/series`. Do the same from
    ungoogled-chromium-macos into `macos/patches/`; also refresh its scripts, `.ini` files and
    `.github/workflows/building.yml` (as `build-macos-steps.yml`). Its `sign_and_package_app.sh`
-   is split into `macos/sign_app.sh` and `macos/package_dmg.sh`.
+   is split into `macos/sign_app.sh` and `macos/package_dmg.sh`. From ungoogled-chromium-windows,
+   copy the patches into `windows/patches/ungoogled-chromium/windows/` and their series entries
+   (before Cerium's), and refresh `downloads.ini`, `flags.windows.gn`, `pruning.list`,
+   `domain_substitution.list`, `build.py` and `package.py` (keep the Cerium changes their
+   docstrings list) and the stage action (`.github/actions/windows-stage/`).
 3. Refresh `patches/cerium/*.patch` if they no longer apply. They are small and each has a
    description header.
 4. Run `python3 utils/check_domain_unsubstitution.py`. Add `--source-tree <chromium src>` for
@@ -331,6 +407,9 @@ staples and checks the app the way Gatekeeper does.
     Cerium's patches.
   - macOS: ungoogled-chromium's patches, the macOS build fixes, Cerium's shared patches, then
     the macOS-only ones.
+  - Windows: binary pruning with the Windows list, ungoogled-chromium's patches, the 27 Windows
+    build fixes, Cerium's shared patches, then the 2 Windows-only ones; also domain substitution
+    with the Windows list.
   - The Linux check also passed on GitHub Actions.
 - `UnsubstituteHost()` was checked against every substituted hostname in the Chromium 156
   source, about 1,700 cases, with no mismatches. Its gtest passes against Chromium's bundled
@@ -357,6 +436,10 @@ staples and checks the app the way Gatekeeper does.
   `verify-macos-release.yml` downloaded its disk image like a user and checked its checksum,
   contents and signature. It then installed Cerium, launched it, and saw it install uBlock Origin
   and Dark Reader into a new profile.
+- The Windows icons from `branding/make_windows_icons.py` were checked by eye at every size, and
+  `windows/package.py` was run on a mock build output.
+- **Not yet compiled: Windows.** The Windows build runs on GitHub Actions; its tests must pass
+  before anything is published.
 - **Not yet compiled: Linux.** The Linux build hasn't run yet; it starts when a version tag is
   pushed.
 
@@ -365,8 +448,8 @@ staples and checks the app the way Gatekeeper does.
 - **Linux:** x86_64 and arm64.
 - **macOS:** Apple Silicon. The macOS harness can also build x86_64 (`macos/build.sh x86_64`),
   but releases are Apple Silicon only.
-- **Windows:** not supported yet. The patches aren't platform-specific, but a build would need the
-  ungoogled-chromium-windows harness, and Windows `.ico` icons in `branding/overlay/`.
+- **Windows:** x64 (64-bit Intel and AMD), Windows 10 and 11. The harness can also build x86 and
+  arm64 (`build.py --x86`, `--arm`), but releases are x64 only.
 
 ## Repository layout
 
@@ -381,15 +464,19 @@ utils/crx3.py                  CRX3 packer and verifier
 utils/check_domain_unsubstitution.py  checks UnsubstituteHost() against domain_regex.list
 utils/test_crx3.py             tests for the CRX3 packer
 utils/rebrand.py               renames Chromium to Cerium in the UI strings, applies the logos
+utils/cerium_first_targets.py  lists the build targets of Cerium's changes (compiled first in CI)
+utils/report_build_errors.py   turns build errors and progress into GitHub Actions annotations
 branding/cerium/               recoloured logo SVGs and large PNGs
 branding/overlay/              rendered logos, mirroring their paths in the Chromium tree
 branding/render.js             renders the overlay from the SVGs
 scripts/check-patches.sh       applies all patches without building
 branding/macos/                macOS app icon sources (compiled by macos/compile_icon.py)
 branding/make_macos_icons.py   recolours the macOS icon layers and builds app.icns
+branding/make_windows_icons.py builds the Windows .ico icons and Start menu tiles
 scripts/, docker/, package/    Linux build and packaging (from portablelinux)
 macos/                         macOS build and packaging (from ungoogled-chromium-macos)
-.github/                       CI (from portablelinux and ungoogled-chromium-macos)
+windows/                       Windows build, packaging and tests (from ungoogled-chromium-windows)
+.github/                       CI (from portablelinux, ungoogled-chromium-macos and -windows)
 ungoogled-chromium/            submodule, pinned to 8025d45 (156.0.8078.47, revision 1)
 ```
 

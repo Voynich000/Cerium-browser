@@ -28,7 +28,7 @@ run_ninja() {
   timeout -k 7m -s SIGTERM "$(remaining_time)s" ninja -C out/Default "$@" 2>&1 | tee "$_root_dir/ninja_output.log"
   status="${PIPESTATUS[0]}"
   if [[ "$status" -ne 0 && "$status" -ne 124 ]]; then
-    python3 "$_root_dir/report_build_errors.py" "$_root_dir/ninja_output.log"
+    python3 "$_root_dir/../utils/report_build_errors.py" "$_root_dir/ninja_output.log"
   fi
   return "$status"
 }
@@ -69,7 +69,9 @@ set +e
 # Cerium: compile the files Cerium's patches change first, so that a mistake
 # in them stops the first build job instead of hours into the build. Once
 # built, later jobs find them up to date.
-_cerium_targets="$(python3 "$_root_dir/cerium_first_targets.py" "$_src_dir" 2> "$_root_dir/cerium_first_targets.log")"
+_cerium_targets="$(python3 "$_root_dir/../utils/cerium_first_targets.py" "$_src_dir" \
+  --patches "$_root_dir/../patches/cerium" --patches "$_root_dir/patches/cerium-macos" \
+  2> "$_root_dir/cerium_first_targets.log")"
 cat "$_root_dir/cerium_first_targets.log"
 if [[ -n "$_cerium_targets" ]]; then
   # shellcheck disable=SC2086

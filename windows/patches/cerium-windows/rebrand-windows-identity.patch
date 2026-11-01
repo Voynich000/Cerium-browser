@@ -1,0 +1,101 @@
+# Gives Cerium its own Windows identity, so it never shares anything with an
+# installed Chromium: the install and profile folders (%LOCALAPPDATA%\Cerium),
+# the registry key (Software\Cerium), the app ID used by the taskbar and the
+# default-apps settings, the HTML/PDF file type and cerium:// registrations,
+# new class IDs for the COM servers it registers (toast notifications,
+# elevation and tracing services), a new Active Setup GUID and a new sandbox
+# AppContainer SID prefix. The interface IDs stay: they name the interfaces
+# defined in the IDL files, not the product.
+
+--- a/chrome/install_static/chromium_install_modes.h
++++ b/chrome/install_static/chromium_install_modes.h
+@@ -21,7 +21,7 @@
+ 
+ // The brand-specific product name to be included as a component of the install
+ // and user data directory paths.
+-inline constexpr wchar_t kProductPathName[] = L"Chromium";
++inline constexpr wchar_t kProductPathName[] = L"Cerium";
+ 
+ // The brand-specific safe browsing client name.
+ inline constexpr char kSafeBrowsingName[] = "chromium";
+@@ -54,28 +54,31 @@
+         .logo_suffix = L"",  // No logo suffix for the primary install mode.
+         .app_guid =
+             L"",  // Empty app_guid since no integration with Google Update.
+-        .base_app_name = L"Chromium",              // A distinct base_app_name.
+-        .base_app_id = L"Chromium",                // A distinct base_app_id.
+-        .browser_prog_id_prefix = L"ChromiumHTM",  // Browser ProgID prefix.
++        .base_app_name = L"Cerium",              // A distinct base_app_name.
++        .base_app_id = L"Cerium",                // A distinct base_app_id.
++        .browser_prog_id_prefix = L"CeriumHTM",  // Browser ProgID prefix.
+         .browser_prog_id_description =
+-            L"Chromium HTML Document",  // Browser ProgID description.
+-        .direct_launch_url_scheme = "chromium",
+-        .pdf_prog_id_prefix = L"ChromiumPDF",  // PDF ProgID prefix.
++            L"Cerium HTML Document",  // Browser ProgID description.
++        .direct_launch_url_scheme = "cerium",
++        .pdf_prog_id_prefix = L"CeriumPDF",  // PDF ProgID prefix.
+         .pdf_prog_id_description =
+-            L"Chromium PDF Document",  // PDF ProgID description.
++            L"Cerium PDF Document",  // PDF ProgID description.
+         .active_setup_guid =
+-            L"{7D2B3E1D-D096-4594-9D8F-A6667F12E0AC}",  // Active Setup
++            L"{AFFC2128-B651-4369-B727-5FDB23DFFA74}",  // Active Setup
+                                                         // GUID.
+-        .toast_activator_clsid = {0x635EFA6F,
+-                                  0x08D6,
+-                                  0x4EC9,
+-                                  {0xBD, 0x14, 0x8A, 0x0F, 0xDE, 0x97, 0x51,
+-                                   0x59}},  // Toast Activator CLSID.
+-        .elevator_clsid = {0xD133B120,
+-                           0x6DB4,
+-                           0x4D6B,
+-                           {0x8B, 0xFE, 0x83, 0xBF, 0x8C, 0xA1, 0xB1,
+-                            0xB0}},  // Elevator CLSID.
++        // Cerium's own class IDs, so it never registers over Chromium's.
++        // {5FB7CD17-9A2E-4C60-865E-B59459D10536}
++        .toast_activator_clsid = {0x5FB7CD17,
++                                  0x9A2E,
++                                  0x4C60,
++                                  {0x86, 0x5E, 0xB5, 0x94, 0x59, 0xD1, 0x05,
++                                   0x36}},  // Toast Activator CLSID.
++        // {0FB732C3-432E-46D8-A74F-562D8810862A}
++        .elevator_clsid = {0x0FB732C3,
++                           0x432E,
++                           0x46D8,
++                           {0xA7, 0x4F, 0x56, 0x2D, 0x88, 0x10, 0x86,
++                            0x2A}},  // Elevator CLSID.
+         .elevator_iid = {0xbb19a0e5,
+                          0xc6,
+                          0x4966,
+@@ -83,11 +86,12 @@
+                           0x3a}},  // IElevator IID and TypeLib
+         // {BB19A0E5-00C6-4966-94B2-5AFEC6FED93A}.
+         .old_elevator_iids = {},
+-        .tracing_service_clsid = {0x83f69367,
+-                                  0x442d,
+-                                  0x447f,
+-                                  {0x8b, 0xcc, 0x0e, 0x3f, 0x97, 0xbe, 0x9c,
+-                                   0xf2}},  // SystemTraceSession CLSID.
++        // {BD39F5C0-5081-4C1A-8A2B-369262DD53B2}
++        .tracing_service_clsid = {0xBD39F5C0,
++                                  0x5081,
++                                  0x4C1A,
++                                  {0x8A, 0x2B, 0x36, 0x92, 0x62, 0xDD, 0x53,
++                                   0xB2}},  // SystemTraceSession CLSID.
+         .tracing_service_iid = {0xe0b03e2d,
+                                 0x7682,
+                                 0x4d83,
+@@ -109,9 +113,9 @@
+         .pdf_doc_icon_resource_index =
+             icon_resources::kPDFDocIndex,  // PDF doc icon resource index.
+         .sandbox_sid_prefix =
+-            L"S-1-15-2-3251537155-1984446955-2931258699-841473695-"
+-            L"1938553385-"
+-            L"924012148-",  // App container sid prefix for sandbox.
++            L"S-1-15-2-3328302736-3915271880-1233267045-3407994842-"
++            L"1892794426-"
++            L"2113175836-",  // App container sid prefix for sandbox.
+     },
+ });
+ 

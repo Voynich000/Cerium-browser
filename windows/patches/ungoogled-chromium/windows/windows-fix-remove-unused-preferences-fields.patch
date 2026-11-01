@@ -1,0 +1,16 @@
+# Cerium: the hunk for profile_management_disclaimer_service.cc is dropped:
+# ungoogled-chromium 8025d45 ("patches: fix compiler warnings"), which Cerium
+# uses for all platforms, already removes that code.
+
+--- a/chrome/browser/policy/configuration_policy_handler_list_factory.cc
++++ b/chrome/browser/policy/configuration_policy_handler_list_factory.cc
+@@ -1903,9 +1903,6 @@ const PolicyToPreferenceMapEntry kSimple
+   { key::kRendererAppContainerEnabled,
+     prefs::kRendererAppContainerEnabled,
+     base::Value::Type::BOOLEAN },
+-  { key::kBoundSessionCredentialsEnabled,
+-    prefs::kBoundSessionCredentialsEnabled,
+-    base::Value::Type::BOOLEAN },
+   { key::kBrowserLegacyExtensionPointsBlocked,
+     prefs::kBlockBrowserLegacyExtensionPoints,
+     base::Value::Type::BOOLEAN },
