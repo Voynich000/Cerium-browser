@@ -67,9 +67,19 @@ async function run() {
     // extensions (utils/crx3.py).
     await exec.exec('python', ['-m', 'pip', 'install', 'httplib2==0.22.0', 'clang==21.1.7',
         'cryptography'], {cwd: HARNESS});
+    // The last lines of build.py's output: on a failure they hold the error
+    // (e.g. a Python traceback), which goes into an annotation, since the log
+    // of a long job is hard to read.
+    const tail = [];
+    const remember = line => {
+        tail.push(line);
+        if (tail.length > 60)
+            tail.shift();
+    };
     const retCode = await exec.exec('python', ['build.py', '--ci', '-j', jobs], {
         cwd: HARNESS,
-        ignoreReturnCode: true
+        ignoreReturnCode: true,
+        listeners: {stdline: remember, errline: remember}
     });
     if (retCode === 0) {
         core.setOutput('finished', true);
@@ -105,6 +115,9 @@ async function run() {
         }
         core.setOutput('finished', false);
     } else {
+        const output = tail.join('\n');
+        core.error(output.length > 4000 ? output.slice(-4000) : output,
+            {title: `build.py failed with exit code ${retCode}; its last output`});
         throw new Error(`Build failed with exit code ${retCode}`);
     }
 }

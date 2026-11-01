@@ -44,6 +44,7 @@ import cerium_first_targets
 import report_build_errors
 sys.path.pop(0)
 
+_START = time.monotonic()
 _PATCH_BIN_RELPATH = Path('third_party/git/usr/bin/patch.exe')
 _BUILD_TIMEOUT_EXIT_CODE = 124
 
@@ -256,7 +257,9 @@ def main():
             downloads.unpack_downloads(download_info, downloads_cache, None, source_tree, extractors)
         else:
             # Clone sources
-            subprocess.run([sys.executable, str(_UNGOOGLED_DIR / 'utils' / 'clone.py'), '-o', str(source_tree), '-p', 'win32' if args.x86 else 'win-arm64' if args.arm else 'win64'], check=True)
+            # Cerium: like upstream, with the output path relative to the
+            # harness (gclient uses it as the name of the checkout)
+            subprocess.run([sys.executable, str(_UNGOOGLED_DIR / 'utils' / 'clone.py'), '-o', 'build\\src', '-p', 'win32' if args.x86 else 'win-arm64' if args.arm else 'win64'], check=True, cwd=_ROOT_DIR)
 
         # Retrieve windows downloads
         get_logger().info('Downloading required files...')
@@ -316,6 +319,10 @@ def main():
         # Cerium: rename the browser and swap in its logos and icons
         subprocess.run([sys.executable, str(_REPO_DIR / 'utils' / 'rebrand.py'), str(source_tree)],
                        check=True)
+        if args.ci:
+            print('::notice::Chromium source ready (cloned, pruned, patched, domains '
+                  'substituted, renamed to Cerium) after {:.0f} minutes'.format(
+                      (time.monotonic() - _START) / 60))
 
     # Check if rust-toolchain folder has been populated
     HOST_CPU_IS_64BIT = sys.maxsize > 2**32
