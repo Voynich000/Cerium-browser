@@ -113,6 +113,10 @@ function Stop-Browser([string] $Directory, [switch] $Force) {
         foreach ($process in $processes) {
             try { & taskkill.exe /PID $process.Id 2>&1 | Out-Null } catch { }
         }
+        # taskkill fails for the processes without a window (those of
+        # renderers, the GPU...); its exit status must not become the
+        # script's (GitHub Actions' pwsh exits with $LASTEXITCODE).
+        $global:LASTEXITCODE = 0
         $deadline = (Get-Date).AddSeconds(30)
         while ((Get-Date) -lt $deadline -and @($processes | Where-Object { -not $_.HasExited }).Count -gt 0) {
             Start-Sleep -Seconds 1
@@ -373,3 +377,4 @@ if ($missing.Count -gt 0) {
     Fail "The .zip's Cerium did not install the bundled extensions $($missing -join ', ') within 2 minutes (installed: $(Get-ExtensionNames $zipProfile))"
 }
 Notice "The .zip's Cerium starts, shows a page and installs its bundled extensions: $(Get-ExtensionNames $zipProfile)"
+exit 0
