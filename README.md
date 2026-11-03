@@ -444,7 +444,9 @@ staples and checks the app the way Gatekeeper does.
   were added to release `156.0.8078.47-1`. It installed Cerium for the current user (files,
   version, icon, Apps entry, Start menu shortcut), started it, saw uBlock Origin and Dark Reader
   installed in the default profile, uninstalled it cleanly, and did the same with the `.zip`.
-  The first runs found three problems, now fixed:
+  `verify-windows-release.yml` then downloaded both from the release like a user, checked them
+  against their SHA-256 files and passed the same tests on both Windows versions. The first runs
+  found three problems, now fixed:
   - the Chromium checkout failed with the absolute output path; it now uses upstream's relative
     one;
   - making the `.zip` failed on the bundled extensions' `licenses` folder;
