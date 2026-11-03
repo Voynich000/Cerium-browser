@@ -333,6 +333,7 @@ administrator rights and registers an uninstaller.
 | `check.yml` | Checks the Linux, macOS and Windows patch series on every push and pull request |
 | `check-macos-icon.yml` | Compiles the macOS app icon with Xcode when its sources change |
 | `test-macos-packaging.yml`, `test-windows-packaging.yml` | Test the packaging and the tests on ungoogled-chromium's own releases, in minutes |
+| `verify-macos-release.yml`, `verify-windows-release.yml` | Download a release's files like a user, check them, install and start Cerium and check its extensions |
 
 The build workflows split the build into a chain of jobs, each under GitHub's 6-hour job
 limit, and pass the build tree between them. A Linux build takes roughly a day; macOS and
@@ -436,10 +437,18 @@ staples and checks the app the way Gatekeeper does.
   `verify-macos-release.yml` downloaded its disk image like a user and checked its checksum,
   contents and signature. It then installed Cerium, launched it, and saw it install uBlock Origin
   and Dark Reader into a new profile.
-- The Windows icons from `branding/make_windows_icons.py` were checked by eye at every size, and
-  `windows/package.py` was run on a mock build output.
-- **Not yet compiled: Windows.** The Windows build runs on GitHub Actions; its tests must pass
-  before anything is published.
+- The Windows icons from `branding/make_windows_icons.py` were checked by eye at every size.
+- **Windows: compiled and released.** The Windows build compiled all of Chromium with Cerium's
+  changes on GitHub's Windows runners, in 7 stages of about 4½ hours, and built the installer and
+  the `.zip`. `windows/test_package.ps1` then passed on Windows Server 2022 and 2025 before both
+  were added to release `156.0.8078.47-1`. It installed Cerium for the current user (files,
+  version, icon, Apps entry, Start menu shortcut), started it, saw uBlock Origin and Dark Reader
+  installed in the default profile, uninstalled it cleanly, and did the same with the `.zip`.
+  The first runs found three problems, now fixed:
+  - the Chromium checkout failed with the absolute output path; it now uses upstream's relative
+    one;
+  - making the `.zip` failed on the bundled extensions' `licenses` folder;
+  - the test script could end with `taskkill`'s exit status although every check had passed.
 - **Not yet compiled: Linux.** The Linux build hasn't run yet; it starts when a version tag is
   pushed.
 
