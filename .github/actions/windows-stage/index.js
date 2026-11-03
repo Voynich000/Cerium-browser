@@ -4,6 +4,7 @@
 // (artifact cerium-windows-x64-build-<job>) or, once the build is finished,
 // uploads the installer and the .zip (artifact cerium-windows-x64).
 // From ungoogled-chromium-windows's stage action.
+import * as fs from 'node:fs';
 import * as core from '@actions/core';
 import * as io from '@actions/io';
 import * as exec from '@actions/exec';
@@ -91,34 +92,50 @@ async function run() {
         await upload(artifact, PACKAGES_ARTIFACT, packageList, BUILD, 30);
     } else if (retCode === BUILD_TIMEOUT_EXIT_CODE) {
         await new Promise(r => setTimeout(r, 5000));
-        // 7z exits with 1 for warnings (e.g. a file it could not open) and
-        // with 2 or more for errors (e.g. a full disk).
-        const zipCode = await exec.exec('7z', ['a', '-tzip', `${HARNESS}\\artifacts.zip`,
-            `${BUILD}\\src`, '-mx=3', '-mtc=on'], {ignoreReturnCode: true});
-        if (zipCode > 1)
-            throw new Error(`Could not archive the build tree (7z exit code ${zipCode})`);
-        // Each stage saves its tree under its own name (e.g. -build-3) and
-        // removes the older ones only then: if the upload fails, the next try
-        // (re-running the failed job) can still continue the previous tree.
-        const job = (process.env.GITHUB_JOB || 'stage').replace(/^build-/, '');
-        const name = `${TREE_ARTIFACT_PREFIX}-${job}`;
-        await upload(artifact, name, [`${HARNESS}\\artifacts.zip`], HARNESS, 7);
-        const {artifacts} = await artifact.listArtifacts();
-        for (const old of artifacts) {
-            if (old.name.startsWith(TREE_ARTIFACT_PREFIX) && old.name !== name) {
-                try {
-                    await artifact.deleteArtifact(old.name);
-                } catch (e) {
-                    console.error(`Could not delete ${old.name}: ${e}`);
-                }
-            }
-        }
+        await saveTree(artifact);
         core.setOutput('finished', false);
     } else {
         const output = tail.join('\n');
         core.error(output.length > 4000 ? output.slice(-4000) : output,
             {title: `build.py failed with exit code ${retCode}; its last output`});
+        // Save what this stage compiled anyway, so that a run that fixes
+        // the cause (resume_run_id, or re-running this job) continues from
+        // here instead of compiling it again.
+        if (fs.existsSync(`${BUILD}\\src\\out\\Default\\build.ninja`)) {
+            try {
+                await saveTree(artifact);
+            } catch (e) {
+                core.warning(`Could not save the build tree: ${e.message}`);
+            }
+        }
         throw new Error(`Build failed with exit code ${retCode}`);
+    }
+}
+
+// Saves the build tree for the next stage (or a run that continues this one)
+// as the artifact cerium-windows-x64-build-<stage>.
+async function saveTree(artifact) {
+    // 7z exits with 1 for warnings (e.g. a file it could not open) and
+    // with 2 or more for errors (e.g. a full disk).
+    const zipCode = await exec.exec('7z', ['a', '-tzip', `${HARNESS}\\artifacts.zip`,
+        `${BUILD}\\src`, '-mx=3', '-mtc=on'], {ignoreReturnCode: true});
+    if (zipCode > 1)
+        throw new Error(`Could not archive the build tree (7z exit code ${zipCode})`);
+    // Each stage saves its tree under its own name (e.g. -build-3) and
+    // removes the older ones only then: if the upload fails, the next try
+    // (re-running the failed job) can still continue the previous tree.
+    const job = (process.env.GITHUB_JOB || 'stage').replace(/^build-/, '');
+    const name = `${TREE_ARTIFACT_PREFIX}-${job}`;
+    await upload(artifact, name, [`${HARNESS}\\artifacts.zip`], HARNESS, 7);
+    const {artifacts} = await artifact.listArtifacts();
+    for (const old of artifacts) {
+        if (old.name.startsWith(TREE_ARTIFACT_PREFIX) && old.name !== name) {
+            try {
+                await artifact.deleteArtifact(old.name);
+            } catch (e) {
+                console.error(`Could not delete ${old.name}: ${e}`);
+            }
+        }
     }
 }
 

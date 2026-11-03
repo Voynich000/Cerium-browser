@@ -20,6 +20,7 @@ if sys.version_info.major < 3:
     raise RuntimeError('Python 3 is required for this script.')
 
 import argparse
+import itertools
 import os
 import platform
 from pathlib import Path
@@ -87,13 +88,17 @@ def main():
         Path('build/src/chrome/tools/build/win/FILES.cfg'),
         build_outputs, args.cpu_arch, excluded_files)
     # Cerium: the bundled extensions and the initial preferences that pin
-    # them, next to chrome.exe and chrome.dll.
-    bundled = (build_outputs / 'bundled_extensions', build_outputs / 'initial_preferences')
-    for path in bundled:
-        if not path.exists():
-            raise SystemExit(f'{path} is missing; run utils/bundle_extensions.py first')
+    # them, next to chrome.exe and chrome.dll. Added file by file, relative
+    # to the build outputs like FILES.cfg's files: create_archive's
+    # include_iter only takes files and directories without subdirectories.
+    for name in ('bundled_extensions', 'initial_preferences'):
+        if not (build_outputs / name).exists():
+            raise SystemExit(f'{build_outputs / name} is missing; run utils/bundle_extensions.py first')
+    bundled = [Path('initial_preferences')] + sorted(
+        path.relative_to(build_outputs)
+        for path in (build_outputs / 'bundled_extensions').rglob('*') if path.is_file())
     filescfg.create_archive(
-        files_generator, bundled, build_outputs, output, timestamp)
+        itertools.chain(files_generator, bundled), (), build_outputs, output, timestamp)
 
 if __name__ == '__main__':
     main()
