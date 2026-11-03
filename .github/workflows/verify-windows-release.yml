@@ -1,0 +1,57 @@
+name: Verify Windows release
+
+# Downloads a release's Windows installer and .zip the way users do, checks
+# them against their SHA-256 files and runs windows/test_package.ps1 on them
+# (install, start, bundled extensions in the default profile, uninstall, the
+# .zip) on Windows Server 2022 and 2025.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (e.g. 156.0.8078.47-1)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download the installer and the .zip
+        shell: pwsh
+        run: |
+          gh release download $env:TAG --pattern '*-x64-windows*' --dir release
+          Get-ChildItem release | Format-Table Name, Length
+          $checksums = @(Get-ChildItem release -Filter '*.sha256')
+          if ($checksums.Count -ne 2) {
+            Write-Host "::error::Expected the installer, the .zip and their .sha256 files in release $env:TAG"
+            exit 1
+          }
+          foreach ($checksum in $checksums) {
+            $expected = (Get-Content $checksum.FullName -Raw).Trim().Split(' ')[0]
+            $file = Join-Path release ($checksum.Name -replace '\.sha256$', '')
+            $actual = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLowerInvariant()
+            if ($actual -ne $expected) {
+              Write-Host "::error::$(Split-Path -Leaf $file): SHA-256 $actual, but its .sha256 file says $expected"
+              exit 1
+            }
+          }
+          Write-Host "::notice::Downloaded $((Get-ChildItem release -Exclude '*.sha256' | ForEach-Object Name) -join ' and ') from release $env:TAG; both match their SHA-256 files"
+
+      - name: Install, start and uninstall Cerium; start it from the .zip
+        shell: pwsh
+        run: windows/test_package.ps1 -Packages release
